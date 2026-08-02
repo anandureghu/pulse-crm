@@ -309,6 +309,13 @@ function ProfileTab({
   onAssign: (to: string) => void
 }) {
   const [assignTo, setAssignTo] = useState(latestEnquiry?.assignedTo ?? '')
+  const [aiAutoreply, setAiAutoreply] = useState(customer.aiAutoreply ?? false)
+
+  const toggleAiAutoreply = async () => {
+    const next = !aiAutoreply
+    setAiAutoreply(next)
+    await supabase.from('customers').update({ ai_autoreply: next }).eq('id', customer.id)
+  }
 
   // Sync when enquiry updates (e.g. via Realtime)
   useEffect(() => {
@@ -336,6 +343,20 @@ function ProfileTab({
               {customer.tags?.length ? customer.tags.map((t) => (
                 <span key={t} className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">{t}</span>
               )) : <span className="text-gray-400">None</span>}
+            </dd>
+          </div>
+          <div className="flex justify-between items-center pt-2 border-t border-gray-100 mt-2">
+            <dt className="text-gray-500 flex flex-col">
+              <span>AI Auto-reply</span>
+              <span className="text-xs text-gray-400">Auto-send AI replies (coming soon)</span>
+            </dt>
+            <dd>
+              <button
+                onClick={toggleAiAutoreply}
+                className={`relative w-9 h-5 rounded-full transition-colors ${aiAutoreply ? 'bg-green-500' : 'bg-gray-200'}`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${aiAutoreply ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </button>
             </dd>
           </div>
         </dl>

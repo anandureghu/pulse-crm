@@ -30,6 +30,8 @@ export default function Inbox() {
   const [optimistic, setOptimistic] = useState<Message[]>([])
   const [clearConfirm, setClearConfirm] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const messages = useMessages(selected)
@@ -50,6 +52,11 @@ export default function Inbox() {
       })
     )
   }, [messages]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset AI suggestion when switching conversations
+  useEffect(() => {
+    setAiSuggestion(null)
+  }, [selected])
 
   // Clear unread count — depends on both selected and conversations
   useEffect(() => {
@@ -140,6 +147,33 @@ export default function Inbox() {
 
   const starredCount = allMessages.filter((m) => m.starred).length
   const unstarredCount = allMessages.filter((m) => !m.starred && !m.id.startsWith('tmp-')).length
+
+  const handleAiSuggest = async () => {
+    if (!selected || aiLoading) return
+    setAiLoading(true)
+    setAiSuggestion(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-reply`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({ conversationId: selected }),
+        }
+      )
+      const body = await res.json()
+      if (!res.ok) { toast(body.error ?? 'AI suggestion failed', 'error'); return }
+      setAiSuggestion(body.reply)
+    } catch {
+      toast('AI suggestion failed', 'error')
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   return (
     <div className="flex h-full">
@@ -260,7 +294,56 @@ export default function Inbox() {
               <div ref={messagesEndRef} />
             </div>
 
-            <div className="bg-white border-t border-gray-200 p-3 flex gap-2">
+            {/* AI suggestion card */}
+            {aiSuggestion && (
+              <div className="mx-3 mb-2 bg-purple-50 border border-purple-200 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-medium text-purple-700">✨ AI suggested reply</span>
+                  <button
+                    onClick={() => setAiSuggestion(null)}
+                    className="text-purple-400 hover:text-purple-600 text-xs"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{aiSuggestion}</p>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(aiSuggestion)
+                      toast('Copied to clipboard', 'success')
+                    }}
+                    className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded-lg px-2.5 py-1 hover:bg-purple-100"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    onClick={() => {
+                      setText(aiSuggestion)
+                      setAiSuggestion(null)
+                    }}
+                    className="text-xs text-white bg-purple-600 hover:bg-purple-700 rounded-lg px-2.5 py-1"
+                  >
+                    Use reply
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white border-t border-gray-200 p-3 flex gap-2 items-end">
+              <button
+                onClick={handleAiSuggest}
+                disabled={aiLoading}
+                title="Get AI suggested reply"
+                className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
+              >
+                {aiLoading ? (
+                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>
+                ) : '✨'}
+              </button>
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}

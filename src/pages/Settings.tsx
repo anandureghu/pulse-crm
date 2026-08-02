@@ -1,6 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
+interface AiConfig {
+  apiKey: string
+  model: string
+  systemPrompt: string
+  enabled: boolean
+}
+
 interface EvolutionSettings {
   apiUrl: string
   activeInstance: string
@@ -48,6 +55,11 @@ export default function Settings() {
   const [settings, setSettings] = useState<EvolutionSettings>({
     apiUrl: '', activeInstance: '', apiKey: '', webhookUrl: '',
   })
+  const [aiConfig, setAiConfig] = useState<AiConfig>({
+    apiKey: '', model: 'gpt-4o-mini', systemPrompt: '', enabled: false,
+  })
+  const [aiSaved, setAiSaved] = useState(false)
+  const [aiSaving, setAiSaving] = useState(false)
   const settingsRef = useRef(settings)
   useEffect(() => { settingsRef.current = settings }, [settings])
 
@@ -74,6 +86,17 @@ export default function Settings() {
           apiKey: d.apiKey ?? '',
           webhookUrl: d.webhookUrl ?? '',
           displayNames: (d.displayNames as Record<string, string>) ?? {},
+        })
+      }
+    })
+    supabase.from('settings').select('value').eq('key', 'ai_config').maybeSingle().then(({ data }) => {
+      if (data?.value) {
+        const d = data.value as Record<string, string | boolean>
+        setAiConfig({
+          apiKey: (d.apiKey as string) ?? '',
+          model: (d.model as string) ?? 'gpt-4o-mini',
+          systemPrompt: (d.systemPrompt as string) ?? '',
+          enabled: (d.enabled as boolean) ?? false,
         })
       }
     })
@@ -321,6 +344,14 @@ export default function Settings() {
   const _isBusy = (name: string, op?: string) =>
     instanceAction?.name === name && (!op || instanceAction.op === op)
   void _isBusy
+
+  const handleSaveAi = async () => {
+    setAiSaving(true)
+    await supabase.from('settings').upsert({ key: 'ai_config', value: aiConfig as unknown as Record<string, unknown> })
+    setAiSaving(false)
+    setAiSaved(true)
+    setTimeout(() => setAiSaved(false), 2000)
+  }
 
   return (
     <div className="p-6">
@@ -604,6 +635,60 @@ supabase functions deploy`}</pre>
             Events configured: <code className="bg-gray-100 px-1 rounded">MESSAGES_UPSERT</code>{' '}
             <code className="bg-gray-100 px-1 rounded">MESSAGES_UPDATE</code>{' '}
             <code className="bg-gray-100 px-1 rounded">CONNECTION_UPDATE</code>
+          </div>
+        </div>
+
+        {/* ── AI Configuration ── */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="font-semibold text-gray-700">AI Assistant</h3>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className="text-xs text-gray-500">Enabled</span>
+              <div
+                onClick={() => setAiConfig((c) => ({ ...c, enabled: !c.enabled }))}
+                className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${aiConfig.enabled ? 'bg-green-500' : 'bg-gray-200'}`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${aiConfig.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </div>
+            </label>
+          </div>
+          <p className="text-xs text-gray-400 mb-4">
+            Powers AI suggested replies in the Inbox using <code className="bg-gray-100 px-1 rounded">gpt-4o-mini</code>.
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">OpenAI API Key</label>
+              <input
+                type="password"
+                value={aiConfig.apiKey}
+                onChange={(e) => setAiConfig((c) => ({ ...c, apiKey: e.target.value }))}
+                placeholder="sk-..."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Get your key at <span className="font-mono">platform.openai.com/api-keys</span>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Product & company knowledge</label>
+              <textarea
+                value={aiConfig.systemPrompt}
+                onChange={(e) => setAiConfig((c) => ({ ...c, systemPrompt: e.target.value }))}
+                rows={6}
+                placeholder={`Describe your products, services, pricing, policies, and tone of voice. The AI uses this to generate relevant replies.\n\nExample:\nWe sell handmade leather goods. Our flagship product is...\nPricing: wallets from ₹1200, bags from ₹3500.\nWe offer free shipping above ₹2000.`}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+              />
+            </div>
+
+            <button
+              onClick={handleSaveAi}
+              disabled={aiSaving}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+            >
+              {aiSaved ? '✓ Saved' : aiSaving ? 'Saving…' : 'Save AI settings'}
+            </button>
           </div>
         </div>
 

@@ -21,6 +21,7 @@ export interface Customer {
   name: string
   assignedTo: string | null
   tags: string[]
+  aiAutoreply: boolean
   createdAt: string
   updatedAt: string
 }
