@@ -103,7 +103,17 @@ export async function fetchMediaBase64(
       },
       cfg,
     )
-    return (res?.base64 as string) ?? null
+    const base64 = res?.base64 as string | undefined
+    if (!base64) return null
+    // Evolution returns plain base64 without the data: prefix — build a valid data URL
+    if (base64.startsWith('data:')) return base64
+    const mimeFallback =
+      msgType === 'image' ? 'image/jpeg'
+      : msgType === 'audio' ? 'audio/ogg'
+      : msgType === 'video' ? 'video/mp4'
+      : 'application/octet-stream'
+    const mime = (res?.mimetype as string | undefined) ?? mimeFallback
+    return `data:${mime};base64,${base64}`
   } catch {
     return null
   }

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useConversations, useMessages } from '../hooks/useConversations'
 import { useCustomers } from '../hooks/useCustomers'
 import { sendMessageFn } from '../lib/functions'
+import { starMessage, clearConversationMessages } from '../lib/db'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
 import type { Conversation, Message } from '../types'
@@ -27,6 +28,8 @@ export default function Inbox() {
   const [sending, setSending] = useState(false)
   const [search, setSearch] = useState('')
   const [optimistic, setOptimistic] = useState<Message[]>([])
+  const [clearConfirm, setClearConfirm] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const messages = useMessages(selected)
@@ -117,6 +120,27 @@ export default function Inbox() {
     }
   }
 
+  const handleStar = async (id: string, starred: boolean) => {
+    await starMessage(id, starred)
+  }
+
+  const handleClear = async () => {
+    if (!selected) return
+    setClearing(true)
+    try {
+      const count = await clearConversationMessages(selected)
+      toast(`Cleared ${count} message${count !== 1 ? 's' : ''}`, 'success')
+      setClearConfirm(false)
+    } catch {
+      toast('Failed to clear messages', 'error')
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  const starredCount = allMessages.filter((m) => m.starred).length
+  const unstarredCount = allMessages.filter((m) => !m.starred && !m.id.startsWith('tmp-')).length
+
   return (
     <div className="flex h-full">
       {/* Sidebar */}
@@ -175,13 +199,54 @@ export default function Inbox() {
               <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0">
                 {customerName(conv)[0]?.toUpperCase()}
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
                 <p className="text-xs text-gray-500">
                   {customers.find((c) => c.id === conv.customerId)?.phone}
                 </p>
               </div>
+              {unstarredCount > 0 && (
+                <button
+                  onClick={() => setClearConfirm(true)}
+                  title="Clear messages"
+                  className="text-xs text-gray-400 hover:text-red-500 flex-shrink-0 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                >
+                  🗑 Clear
+                </button>
+              )}
             </div>
+
+            {/* Clear confirmation dialog */}
+            {clearConfirm && (
+              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+                  <h3 className="text-base font-semibold text-gray-800 mb-2">Clear messages?</h3>
+                  <p className="text-sm text-gray-500 mb-1">
+                    This will permanently delete <span className="font-medium text-gray-800">{unstarredCount} message{unstarredCount !== 1 ? 's' : ''}</span> and their media files from storage.
+                  </p>
+                  {starredCount > 0 && (
+                    <p className="text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2 mb-4">
+                      ⭐ {starredCount} starred message{starredCount !== 1 ? 's' : ''} will be kept.
+                    </p>
+                  )}
+                  <div className="flex gap-2 mt-4">
+                    <button
+                      onClick={() => setClearConfirm(false)}
+                      className="flex-1 border border-gray-300 text-gray-700 text-sm font-medium py-2 rounded-lg hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleClear}
+                      disabled={clearing}
+                      className="flex-1 bg-red-500 text-white text-sm font-medium py-2 rounded-lg hover:bg-red-600 disabled:opacity-50"
+                    >
+                      {clearing ? 'Clearing…' : 'Clear messages'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="flex-1 overflow-auto p-4 space-y-2">
               {allMessages.map((msg) => (
@@ -189,6 +254,7 @@ export default function Inbox() {
                   key={msg.id}
                   msg={msg}
                   customerPhone={customers.find((c) => c.id === conv.customerId)?.phone}
+                  onStar={msg.id.startsWith('tmp-') ? undefined : handleStar}
                 />
               ))}
               <div ref={messagesEndRef} />

@@ -12,7 +12,15 @@ function realCaption(text: string | undefined): string | null {
   return text
 }
 
-export function MessageBubble({ msg, customerPhone }: { msg: Message; customerPhone?: string }) {
+export function MessageBubble({
+  msg,
+  customerPhone,
+  onStar,
+}: {
+  msg: Message
+  customerPhone?: string
+  onStar?: (id: string, starred: boolean) => void
+}) {
   const isAgent = msg.sender === 'agent'
 
   const tick =
@@ -25,7 +33,20 @@ export function MessageBubble({ msg, customerPhone }: { msg: Message; customerPh
     )
 
   return (
-    <div className={`flex ${isAgent ? 'justify-end' : 'justify-start'}`}>
+    <div className={`group flex items-end gap-1 ${isAgent ? 'flex-row-reverse' : 'flex-row'}`}>
+      {/* Star button — visible on hover or when starred */}
+      {onStar && (
+        <button
+          onClick={() => onStar(msg.id, !msg.starred)}
+          title={msg.starred ? 'Unstar message' : 'Star message'}
+          className={`flex-shrink-0 text-base leading-none transition-opacity mb-2 ${
+            msg.starred ? 'opacity-100' : 'opacity-0 group-hover:opacity-60 hover:!opacity-100'
+          }`}
+        >
+          {msg.starred ? '⭐' : '☆'}
+        </button>
+      )}
+
       <div
         className={`px-3 py-2 rounded-2xl text-sm max-w-xs shadow-sm ${
           isAgent

@@ -198,6 +198,44 @@ export async function updateMessageStatus(id: string, status: Message['status'])
   return supabase.from('messages').update({ status }).eq('id', id)
 }
 
+export async function starMessage(id: string, starred: boolean) {
+  return supabase.from('messages').update({ starred }).eq('id', id)
+}
+
+export async function clearConversationMessages(conversationId: string): Promise<number> {
+  // Fetch non-starred messages that have media in our Supabase Storage
+  const { data: toDelete } = await supabase
+    .from('messages')
+    .select('id, media')
+    .eq('conversation_id', conversationId)
+    .eq('starred', false)
+
+  if (!toDelete?.length) return 0
+
+  // Remove files from storage for messages with Supabase Storage media URLs
+  const storagePaths = toDelete
+    .map((m) => {
+      if (!m.media) return null
+      const marker = '/object/public/whatsapp-media/'
+      const idx = m.media.indexOf(marker)
+      return idx !== -1 ? m.media.slice(idx + marker.length) : null
+    })
+    .filter((p): p is string => p !== null)
+
+  if (storagePaths.length) {
+    await supabase.storage.from('whatsapp-media').remove(storagePaths)
+  }
+
+  // Delete non-starred messages from DB
+  await supabase
+    .from('messages')
+    .delete()
+    .eq('conversation_id', conversationId)
+    .eq('starred', false)
+
+  return toDelete.length
+}
+
 // ── Notes ─────────────────────────────────────────────────────────────────────
 
 export function subscribeToNotes(enquiryId: string, onData: (notes: Note[]) => void): Unsubscribe {

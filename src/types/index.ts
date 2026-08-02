@@ -52,6 +52,7 @@ export interface Message {
   media?: string
   status: 'sent' | 'delivered' | 'read'
   timestamp: string
+  starred?: boolean
 }
 
 export interface Note {

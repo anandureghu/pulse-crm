@@ -4,20 +4,22 @@ import { useAuthStore } from '../store/authStore'
 import { supabase } from '../lib/supabase'
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: '📊' },
-  { to: '/inbox', label: 'Inbox', icon: '💬' },
-  { to: '/customers', label: 'Customers', icon: '👥' },
-  { to: '/pipeline', label: 'Pipeline', icon: '📈' },
-  { to: '/calendar', label: 'Calendar', icon: '📅' },
-  { to: '/followups', label: 'Follow-ups', icon: '🔔' },
-  { to: '/analytics', label: 'Analytics', icon: '📉' },
-  { to: '/settings', label: 'Settings', icon: '⚙️' },
+  { to: '/', label: 'Dashboard', icon: '📊', adminOnly: false },
+  { to: '/inbox', label: 'Inbox', icon: '💬', adminOnly: false },
+  { to: '/customers', label: 'Customers', icon: '👥', adminOnly: false },
+  { to: '/pipeline', label: 'Pipeline', icon: '📈', adminOnly: false },
+  { to: '/calendar', label: 'Calendar', icon: '📅', adminOnly: false },
+  { to: '/followups', label: 'Follow-ups', icon: '🔔', adminOnly: false },
+  { to: '/analytics', label: 'Analytics', icon: '📉', adminOnly: false },
+  { to: '/team', label: 'Team', icon: '👤', adminOnly: true },
+  { to: '/settings', label: 'Settings', icon: '⚙️', adminOnly: false },
 ]
 
-const mobileNav = navItems.slice(0, 5)
+const mobileNav = navItems.filter((i) => !i.adminOnly).slice(0, 5)
 
 export default function Layout() {
   const user = useAuthStore((s) => s.user)
+  const role = useAuthStore((s) => s.role)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
@@ -49,7 +51,7 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-          {navItems.map(({ to, label, icon }) => (
+          {navItems.filter((item) => !item.adminOnly || role === 'admin').map(({ to, label, icon }) => (
             <NavLink
               key={to}
               to={to}

@@ -17,6 +17,7 @@ const Calendar = lazy(() => import('./pages/Calendar'))
 const Followups = lazy(() => import('./pages/Followups'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const Settings = lazy(() => import('./pages/Settings'))
+const Team = lazy(() => import('./pages/Team'))
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore()
@@ -100,6 +101,7 @@ export default function App() {
             <Route path="followups" element={<Suspense fallback={<PageLoader />}><Followups /></Suspense>} />
             <Route path="analytics" element={<Suspense fallback={<PageLoader />}><Analytics /></Suspense>} />
             <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
+            <Route path="team" element={<Suspense fallback={<PageLoader />}><Team /></Suspense>} />
           </Route>
         </Routes>
       </BrowserRouter>
