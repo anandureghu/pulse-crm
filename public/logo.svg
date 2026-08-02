@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 48">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+  </defs>
+  <!-- Icon box -->
+  <rect width="48" height="48" rx="12" fill="url(#bg)"/>
+  <!-- Pulse waveform -->
+  <polyline points="4,24 11,24 14,13 18,35 22,19 26,29 30,24 44,24"
+    fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Wordmark -->
+  <text x="58" y="32" font-family="system-ui,-apple-system,sans-serif" font-size="22" font-weight="800" fill="#111827" letter-spacing="-0.5">puls</text>
+  <text x="102" y="32" font-family="system-ui,-apple-system,sans-serif" font-size="22" font-weight="800" fill="#16a34a" letter-spacing="-0.5">rm</text>
+</svg>
