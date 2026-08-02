@@ -258,6 +258,17 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
         created_by: 'system',
       })
     }
+    // Fire new_lead notification to team (background, non-blocking)
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    fetch(`${supabaseUrl}/functions/v1/notify-team`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'new_lead',
+        data: { customerName: data.pushName ?? phone, customerPhone: phone },
+      }),
+    }).catch(() => {})
   } else {
     const { data: enq } = await supabase
       .from('enquiries')

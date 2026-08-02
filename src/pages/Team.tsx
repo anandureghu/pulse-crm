@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
 import { toast } from '../components/Toast'
 
-type TeamMember = { id: string; email: string; role: 'admin' | 'sales' }
+type TeamMember = { id: string; email: string; role: 'admin' | 'sales'; phone: string | null }
 
 export default function Team() {
   const { user } = useAuthStore()
@@ -11,13 +11,16 @@ export default function Team() {
   const [loading, setLoading] = useState(true)
   const [showInvite, setShowInvite] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
+  const [invitePhone, setInvitePhone] = useState('')
   const [inviteRole, setInviteRole] = useState<'sales' | 'admin'>('sales')
+  const [editingPhone, setEditingPhone] = useState<string | null>(null)
+  const [phoneInput, setPhoneInput] = useState('')
   const [inviting, setInviting] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
-    const { data } = await supabase.from('users').select('id, email, role').order('email')
+    const { data } = await supabase.from('users').select('id, email, role, phone').order('email')
     setMembers((data ?? []) as TeamMember[])
     setLoading(false)
   }
@@ -42,9 +45,14 @@ export default function Team() {
       )
       const body = await res.json()
       if (!res.ok) { toast(body.error ?? 'Invite failed', 'error'); return }
+      // Save phone if provided — the user row is created by handle_new_user trigger
+      if (invitePhone.trim() && body?.userId) {
+        await supabase.from('users').update({ phone: invitePhone.trim() }).eq('id', body.userId)
+      }
       toast(`Invite sent to ${inviteEmail.trim()}`, 'success')
       setShowInvite(false)
       setInviteEmail('')
+      setInvitePhone('')
       setInviteRole('sales')
       load()
     } catch {
@@ -59,6 +67,15 @@ export default function Team() {
     if (error) { toast('Failed to update role', 'error'); return }
     setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role } : m)))
     toast('Role updated', 'success')
+  }
+
+  const handlePhoneSave = async (memberId: string) => {
+    const phone = phoneInput.trim() || null
+    const { error } = await supabase.from('users').update({ phone }).eq('id', memberId)
+    if (error) { toast('Failed to save phone', 'error'); return }
+    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, phone } : m)))
+    setEditingPhone(null)
+    toast('Phone saved', 'success')
   }
 
   const handleRemove = async (memberId: string, email: string) => {
@@ -122,6 +139,16 @@ export default function Team() {
                 />
               </div>
               <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">WhatsApp number <span className="text-gray-400">(optional)</span></label>
+                <input
+                  type="tel"
+                  value={invitePhone}
+                  onChange={(e) => setInvitePhone(e.target.value)}
+                  placeholder="91XXXXXXXXXX"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">Role</label>
                 <select
                   value={inviteRole}
@@ -134,7 +161,7 @@ export default function Team() {
               </div>
               <p className="text-xs text-gray-400">
                 They'll receive an email to set their password and join the team.
-                You can assign enquiries to them immediately.
+                Add their WhatsApp number to receive automatic event notifications.
               </p>
             </div>
             <div className="flex gap-2 mt-5">
@@ -167,6 +194,7 @@ export default function Team() {
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Email</th>
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">WhatsApp</th>
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Role</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -178,6 +206,40 @@ export default function Team() {
                     {m.email}
                     {m.id === user?.id && (
                       <span className="ml-2 text-xs text-gray-400">(you)</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingPhone === m.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="tel"
+                          value={phoneInput}
+                          onChange={(e) => setPhoneInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handlePhoneSave(m.id)
+                            if (e.key === 'Escape') setEditingPhone(null)
+                          }}
+                          autoFocus
+                          placeholder="91XXXXXXXXXX"
+                          className="border border-gray-300 rounded px-2 py-1 text-xs w-36 focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                        <button onClick={() => handlePhoneSave(m.id)} className="text-xs text-green-600 hover:text-green-800 font-medium">Save</button>
+                        <button onClick={() => setEditingPhone(null)} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingPhone(m.id); setPhoneInput(m.phone ?? '') }}
+                        className="text-xs text-gray-500 hover:text-gray-800 group flex items-center gap-1"
+                      >
+                        {m.phone ? (
+                          <>
+                            <span className="text-green-600">📱</span>
+                            <span>{m.phone}</span>
+                          </>
+                        ) : (
+                          <span className="text-gray-300 group-hover:text-gray-500">+ Add number</span>
+                        )}
+                      </button>
                     )}
                   </td>
                   <td className="px-4 py-3">
