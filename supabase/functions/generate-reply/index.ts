@@ -42,18 +42,54 @@ Deno.serve(async (req) => {
 
   // Build OpenAI messages array
   const model = aiCfg.model ?? 'gpt-4o-mini'
-  const systemPrompt = aiCfg.systemPrompt?.trim()
-    ? `You are a helpful sales assistant. When replying, be professional, concise, and friendly.\n\nProduct & company information:\n${aiCfg.systemPrompt}`
-    : 'You are a helpful sales assistant. Respond professionally, concisely, and helpfully to the customer.'
+
+  const productContext = aiCfg.systemPrompt?.trim()
+    ? `\n\n## Product & Company Information\n${aiCfg.systemPrompt}`
+    : ''
+
+  const systemPrompt = `You are an experienced, friendly sales professional handling WhatsApp conversations.${productContext}
+
+## Language & Tone Detection (CRITICAL)
+Carefully read ALL the customer's messages and detect:
+1. **Language** — identify exactly what the customer uses:
+   - Pure Malayalam (Malayalam script): reply in Malayalam script
+   - Manglish (Malayalam words written in English letters, e.g. "enthu undakki", "evide aanu", "sheriyano", "evidunde"): reply in Manglish
+   - English: reply in English
+   - Hindi: reply in Hindi
+   - Tamil: reply in Tamil
+   - Any other language or regional script: match it exactly
+   - Mixed (e.g. English + Manglish, or Hindi + English): match that same mix
+2. **Tone** — casual/friendly → be casual; formal/polite → be formal; direct/brief → be direct and brief
+3. **Enquiry pattern** — what are they really asking? price, availability, features, delivery, comparison, complaint, just browsing?
+
+## Sales Approach
+- Reply as an experienced salesperson: warm, helpful, never pushy
+- Understand the need before pitching — ask a clarifying question if the intent is unclear
+- If they show interest, naturally move toward the next step (demo, order, visit, call)
+- Handle objections with empathy ("I understand…") then reframe with value
+- Keep replies concise — WhatsApp is not email. 1–4 sentences max unless they asked for details
+- Never start with "Hello" or "Hi" if they've already been greeted in the conversation
+
+## Output
+Return ONLY the reply text. No quotes, no explanation, no "Here is a suggested reply:". Just the message itself.`
 
   const openaiMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-    { role: 'system', content: systemPrompt + '\n\nGenerate ONLY the reply text — no preamble, no quotes, no explanation.' },
+    { role: 'system', content: systemPrompt },
   ]
 
   for (const m of messages) {
-    const content = m.text && !m.text.match(/^\[.*\]$/)
-      ? m.text
-      : `[${m.type} message]`
+    let content: string
+    if (m.text && !m.text.match(/^\[.*\]$/)) {
+      content = m.type !== 'text' ? `[sent a ${m.type}] ${m.text}` : m.text
+    } else {
+      const labels: Record<string, string> = {
+        image: '[sent a photo]',
+        audio: '[sent a voice message]',
+        video: '[sent a video]',
+        document: '[sent a document]',
+      }
+      content = labels[m.type] ?? `[${m.type}]`
+    }
     openaiMessages.push({
       role: m.sender === 'agent' ? 'assistant' : 'user',
       content,
