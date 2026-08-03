@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   DndContext,
   DragOverlay,
@@ -32,8 +33,10 @@ const LOST: EnquiryStatus[] = ['not_interested', 'lost', 'spam', 'duplicate']
 export default function Pipeline() {
   const { enquiries, loading } = useEnquiries()
   const { customers } = useCustomers()
+  const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
   const [optimisticStatuses, setOptimisticStatuses] = useState<Record<string, EnquiryStatus>>({})
+  const [mobileStage, setMobileStage] = useState<EnquiryStatus>('new_lead')
 
   // Clear optimistic entries once real data catches up
   useEffect(() => {
@@ -84,38 +87,89 @@ export default function Pipeline() {
     }
   }
 
-  if (loading) return <div className="p-6 text-sm text-gray-400">Loading…</div>
+  if (loading) return <div className="p-4 text-sm text-gray-400">Loading…</div>
+
+  const mobileCards = activeEnquiries.filter((e) => e.status === mobileStage)
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold text-gray-800">Sales Pipeline</h2>
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between px-4 pt-4 pb-3 md:px-6 md:pt-6">
+        <h2 className="text-lg md:text-xl font-semibold text-gray-800">Sales Pipeline</h2>
         <span className="text-sm text-gray-400">{activeEnquiries.length} active</span>
       </div>
 
-      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        <div className="flex gap-3 overflow-x-auto pb-4">
-          {STAGES.map((stage) => (
-            <StageColumn
-              key={stage.key}
-              stage={stage}
-              enquiries={activeEnquiries.filter((e) => e.status === stage.key)}
-              customerName={customerName}
-              isDragging={!!activeId}
-            />
-          ))}
+      {/* Mobile: stage tabs + vertical card list */}
+      <div className="md:hidden flex flex-col flex-1 min-h-0">
+        <div className="flex gap-2 overflow-x-auto px-4 pb-3 flex-shrink-0">
+          {STAGES.map((stage) => {
+            const count = activeEnquiries.filter((e) => e.status === stage.key).length
+            const isActive = mobileStage === stage.key
+            return (
+              <button
+                key={stage.key}
+                onClick={() => setMobileStage(stage.key)}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                  isActive ? stage.header + ' border-transparent' : 'bg-white border-gray-200 text-gray-500'
+                }`}
+              >
+                {stage.label}
+                <span className={`text-xs font-bold ${isActive ? '' : 'text-gray-400'}`}>{count}</span>
+              </button>
+            )
+          })}
         </div>
-
-        <DragOverlay>
-          {active && (
-            <EnquiryCard
-              enquiry={active}
-              customerName={customerName(active.customerId)}
-              overlay
-            />
+        <div className="flex-1 overflow-auto px-4 pb-4 space-y-2">
+          {mobileCards.length === 0 ? (
+            <div className="text-center text-sm text-gray-300 py-12">No leads in this stage</div>
+          ) : (
+            mobileCards.map((e) => (
+              <button
+                key={e.id}
+                onClick={() => {
+                  const cust = customers.find((c) => c.id === e.customerId)
+                  if (cust) navigate(`/customers/${cust.id}`)
+                }}
+                className="w-full text-left bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-medium text-sm text-gray-800">{customerName(e.customerId)}</p>
+                  {e.value > 0 && (
+                    <span className="text-xs font-semibold text-gray-600 flex-shrink-0">₹{e.value.toLocaleString('en-IN')}</span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">{e.assignedTo ?? 'Unassigned'}</p>
+              </button>
+            ))
           )}
-        </DragOverlay>
-      </DndContext>
+        </div>
+      </div>
+
+      {/* Desktop: kanban drag-and-drop */}
+      <div className="hidden md:block flex-1 overflow-hidden px-6 pb-6">
+        <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+          <div className="flex gap-3 overflow-x-auto pb-4 h-full">
+            {STAGES.map((stage) => (
+              <StageColumn
+                key={stage.key}
+                stage={stage}
+                enquiries={activeEnquiries.filter((e) => e.status === stage.key)}
+                customerName={customerName}
+                isDragging={!!activeId}
+              />
+            ))}
+          </div>
+
+          <DragOverlay>
+            {active && (
+              <EnquiryCard
+                enquiry={active}
+                customerName={customerName(active.customerId)}
+                overlay
+              />
+            )}
+          </DragOverlay>
+        </DndContext>
+      </div>
     </div>
   )
 }

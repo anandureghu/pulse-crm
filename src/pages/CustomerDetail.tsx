@@ -125,43 +125,47 @@ export default function CustomerDetail() {
   if (!customer) return <div className="p-6 text-gray-400 text-sm">Customer not found.</div>
 
   return (
-    <div className="p-6">
+    <div className="p-3 sm:p-6">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <button onClick={() => navigate('/customers')} className="text-gray-400 hover:text-gray-600 text-sm">
-          ← Customers
-        </button>
-        <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold flex-shrink-0">
-          {customer.name[0]?.toUpperCase()}
-        </div>
-        <div>
-          {editingName ? (
-            <div className="flex items-center gap-2">
-              <input
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                className="border border-gray-300 rounded px-2 py-1 text-sm"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') setEditingName(false) }}
-              />
-              <button onClick={handleSaveName} className="text-green-600 text-sm font-medium">Save</button>
-              <button onClick={() => setEditingName(false)} className="text-gray-400 text-sm">Cancel</button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <h2 className="text-xl font-semibold text-gray-800">{customer.name}</h2>
-              <button onClick={() => setEditingName(true)} className="text-gray-400 hover:text-gray-600 text-xs">✏️</button>
-            </div>
-          )}
-          <p className="text-sm text-gray-500">{customer.phone}</p>
+      <div className="mb-4 md:mb-6 space-y-3">
+        {/* Row 1: back + avatar + name */}
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate('/customers')} className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0">
+            ←
+          </button>
+          <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0">
+            {customer.name[0]?.toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1 text-sm min-w-0 flex-1"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') setEditingName(false) }}
+                />
+                <button onClick={handleSaveName} className="text-green-600 text-sm font-medium flex-shrink-0">Save</button>
+                <button onClick={() => setEditingName(false)} className="text-gray-400 text-sm flex-shrink-0">✕</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 min-w-0">
+                <h2 className="text-base sm:text-xl font-semibold text-gray-800 truncate">{customer.name}</h2>
+                <button onClick={() => setEditingName(true)} className="text-gray-400 hover:text-gray-600 text-xs flex-shrink-0">✏️</button>
+              </div>
+            )}
+            <p className="text-xs text-gray-500">{customer.phone}</p>
+          </div>
         </div>
 
+        {/* Row 2: status + follow-up (full width on mobile) */}
         {latestEnquiry && (
-          <div className="ml-auto flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
             <select
               value={latestEnquiry.status}
               onChange={(e) => handleStatusChange(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
@@ -169,7 +173,7 @@ export default function CustomerDetail() {
             </select>
             <button
               onClick={() => setShowFollowupForm(true)}
-              className="bg-yellow-500 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-yellow-600"
+              className="flex-shrink-0 bg-yellow-500 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-yellow-600"
             >
               + Follow-up
             </button>
@@ -178,12 +182,12 @@ export default function CustomerDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
+      <div className="flex gap-1 border-b border-gray-200 mb-4 md:mb-6 overflow-x-auto -mx-3 sm:mx-0 px-3 sm:px-0">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+            className={`px-3 sm:px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
               tab === t.key
                 ? 'border-green-600 text-green-700'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -239,8 +243,8 @@ export default function CustomerDetail() {
       {tab === 'payments' && <PaymentsTab customerId={id!} authorEmail={user?.email ?? ''} onActivity={logActivity} />}
 
       {showFollowupForm && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 w-80 shadow-xl">
+        <div className="fixed inset-0 bg-black/30 flex items-end sm:items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-xl">
             <h3 className="font-semibold text-gray-800 mb-4">Schedule Follow-up</h3>
             <div className="space-y-3">
               <div>
@@ -323,7 +327,7 @@ function ProfileTab({
   }, [latestEnquiry?.assignedTo])
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-2xl">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 max-w-2xl">
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <h3 className="font-semibold text-gray-700 mb-3">Contact Info</h3>
         <dl className="space-y-2 text-sm">
@@ -405,7 +409,7 @@ function TimelineTab({ activities }: { activities: ReturnType<typeof useActiviti
     return <p className="text-sm text-gray-400">No activity yet.</p>
   }
   return (
-    <div className="max-w-lg space-y-1">
+    <div className="max-w-lg space-y-1 w-full">
       {activities.map((a) => (
         <div key={a.id} className="flex gap-3 items-start">
           <div className="mt-1.5 w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
@@ -426,7 +430,7 @@ function WhatsAppTab({ messages }: { messages: ReturnType<typeof useMessages> })
     return <p className="text-sm text-gray-400">No WhatsApp messages yet.</p>
   }
   return (
-    <div className="max-w-lg space-y-2 bg-gray-50 rounded-xl p-4">
+    <div className="max-w-lg w-full space-y-2 bg-gray-50 rounded-xl p-4">
       {messages.map((msg) => (
         <MessageBubble key={msg.id} msg={msg} customerPhone={customer.phone} />
       ))}
@@ -448,7 +452,7 @@ function NotesTab({
   onDeleteNote: (id: string) => void
 }) {
   return (
-    <div className="max-w-lg">
+    <div className="max-w-lg w-full">
       <div className="flex gap-2 mb-4">
         <textarea
           value={noteText}
@@ -493,7 +497,7 @@ function EnquiriesTab({ enquiries }: { enquiries: Enquiry[] }) {
     return <p className="text-sm text-gray-400">No enquiries yet.</p>
   }
   return (
-    <div className="max-w-lg space-y-2">
+    <div className="max-w-lg w-full space-y-2">
       {enquiries.map((e, i) => (
         <div key={e.id} className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-center justify-between">
@@ -623,7 +627,7 @@ function FilesTab({
   }
 
   return (
-    <div className="max-w-lg">
+    <div className="max-w-lg w-full">
       <div className="mb-4 flex items-center gap-3">
         <input ref={fileInputRef} type="file" onChange={handleUpload} className="hidden" />
         <button
@@ -741,7 +745,7 @@ function CallLogsTab({
   }
 
   return (
-    <div className="max-w-lg">
+    <div className="max-w-lg w-full">
       <button
         onClick={() => setShowForm(true)}
         className="mb-4 bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700"
@@ -897,7 +901,7 @@ function PaymentsTab({
   const total = payments.filter((p) => p.status === 'received').reduce((s, p) => s + p.amount, 0)
 
   return (
-    <div className="max-w-lg">
+    <div className="max-w-lg w-full">
       <div className="flex items-center justify-between mb-4">
         <button onClick={() => setShowForm(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">
           + Record Payment

@@ -177,8 +177,8 @@ export default function Inbox() {
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
-      <div className="w-72 border-r border-gray-200 bg-white flex flex-col flex-shrink-0">
+      {/* Sidebar — full screen on mobile when no conv selected, hidden when chat is open */}
+      <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0`}>
         <div className="p-4 border-b border-gray-200 space-y-2">
           <h2 className="font-semibold text-gray-800">Inbox</h2>
           <input
@@ -225,11 +225,20 @@ export default function Inbox() {
         </div>
       </div>
 
-      {/* Chat pane */}
-      <div className="flex-1 flex flex-col bg-gray-50 min-w-0">
+      {/* Chat pane — full screen on mobile when conv selected, hidden otherwise */}
+      <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-gray-50 min-w-0`}>
         {conv ? (
           <>
-            <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+            <div className="bg-white border-b border-gray-200 px-3 py-3 flex items-center gap-2">
+              <button
+                onClick={() => setSelected(null)}
+                className="md:hidden text-gray-400 hover:text-gray-600 p-1 -ml-1 flex-shrink-0"
+                aria-label="Back to conversations"
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path d="M13 16l-6-6 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
               <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0">
                 {customerName(conv)[0]?.toUpperCase()}
               </div>
