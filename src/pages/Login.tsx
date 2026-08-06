@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, Navigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
@@ -12,9 +12,16 @@ export default function Login() {
   const [googleLoading, setGoogleLoading] = useState(false)
   const [mode, setMode] = useState<'signin' | 'forgot'>('signin')
   const navigate = useNavigate()
-  const { user, loading: authLoading } = useAuthStore()
+  const { user, loading: authLoading, member } = useAuthStore()
 
-  if (!authLoading && user) return <Navigate to="/" replace />
+  useEffect(() => {
+    if (sessionStorage.getItem('pulsrm_not_invited') === '1') {
+      sessionStorage.removeItem('pulsrm_not_invited')
+      setError('You need an invite to access pulsrm. Ask an admin to invite your email.')
+    }
+  }, [])
+
+  if (!authLoading && user && member) return <Navigate to="/" replace />
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -22,8 +29,23 @@ export default function Login() {
     setInfo('')
     setLoading(true)
     try {
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
       if (signInError) throw signInError
+      if (!data.user) throw new Error('No user')
+
+      const { data: profile } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', data.user.id)
+        .maybeSingle()
+
+      if (!profile) {
+        try { await supabase.functions.invoke('reject-uninvited') } catch { /* ignore */ }
+        await supabase.auth.signOut()
+        setError('You need an invite to access pulsrm. Ask an admin to invite this email.')
+        return
+      }
+
       navigate('/', { replace: true })
     } catch {
       setError('Invalid email or password')
@@ -80,6 +102,10 @@ export default function Login() {
           </p>
         </div>
 
+        {error && mode === 'signin' && (
+          <p className="text-sm text-red-500 mb-4 text-center">{error}</p>
+        )}
+
         {mode === 'signin' ? (
           <div className="space-y-4">
             <button
@@ -135,7 +161,6 @@ export default function Login() {
                   placeholder="••••••••"
                 />
               </div>
-              {error && <p className="text-sm text-red-500">{error}</p>}
               <button
                 type="submit"
                 disabled={loading || googleLoading}
@@ -181,7 +206,7 @@ export default function Login() {
         )}
 
         <p className="mt-6 text-center text-xs text-gray-400">
-          Invited? Open the email link, or use{' '}
+          Access is invite-only. Open your invite email, or use{' '}
           <Link to="/set-password" className="text-green-600 hover:text-green-700">
             set password
           </Link>

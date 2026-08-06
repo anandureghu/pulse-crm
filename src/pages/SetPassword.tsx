@@ -10,18 +10,18 @@ export default function SetPassword() {
   const [loading, setLoading] = useState(false)
   const [ready, setReady] = useState(false)
   const navigate = useNavigate()
-  const { user, loading: authLoading } = useAuthStore()
+  const { user, loading: authLoading, member } = useAuthStore()
 
   useEffect(() => {
     // Wait for invite/recovery tokens in the URL hash to become a session
-    if (authLoading) return
+    if (authLoading || member === null) return
     if (user) {
       setReady(true)
       return
     }
     const t = window.setTimeout(() => setReady(true), 1500)
     return () => window.clearTimeout(t)
-  }, [user, authLoading])
+  }, [user, authLoading, member])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -46,7 +46,7 @@ export default function SetPassword() {
     }
   }
 
-  if (authLoading || !ready) {
+  if (authLoading || member === null || !ready) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 text-sm text-gray-400">
         Checking invite link…
@@ -54,13 +54,17 @@ export default function SetPassword() {
     )
   }
 
-  if (!user) {
+  if (!user || !member) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="bg-white rounded-2xl shadow-md p-8 w-full max-w-sm text-center">
-          <h1 className="text-lg font-semibold text-gray-800 mb-2">Link expired or invalid</h1>
+          <h1 className="text-lg font-semibold text-gray-800 mb-2">
+            {!user ? 'Link expired or invalid' : 'Invite required'}
+          </h1>
           <p className="text-sm text-gray-500 mb-6">
-            Ask an admin to send a new invite, or use Forgot password on the login page.
+            {!user
+              ? 'Ask an admin to send a new invite, or use Forgot password on the login page.'
+              : 'You need an invite to access pulsrm. Ask an admin to invite your email.'}
           </p>
           <Link to="/login" className="text-sm text-green-600 hover:text-green-700 font-medium">
             Go to login

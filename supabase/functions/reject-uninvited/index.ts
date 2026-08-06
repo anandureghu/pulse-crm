@@ -13,6 +13,7 @@ const ok = (data: unknown) =>
 const fail = (message: string, status = 400) =>
   new Response(JSON.stringify({ error: message }), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
+/** Deletes the caller's auth account when they have no CRM profile (uninvited Google/email signup). */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   if (req.method !== 'POST') return fail('Method Not Allowed', 405)
@@ -23,31 +24,25 @@ Deno.serve(async (req) => {
   const callerClient = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_ANON_KEY')!,
-    { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } }
+    { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } },
   )
   const { data: { user } } = await callerClient.auth.getUser()
-  if (!user) return fail('Unauthorized', 401)
-
-  const { data: profile } = await callerClient.from('users').select('role').eq('id', user.id).single()
-  if (profile?.role !== 'admin') return fail('Forbidden: admin role required', 403)
-
-  let body: { userId?: string }
-  try { body = await req.json() } catch { return fail('Invalid JSON', 400) }
-
-  const { userId } = body
-  if (!userId) return fail('userId is required', 400)
-  if (userId === user.id) return fail('You cannot remove yourself', 400)
+  if (!user?.email) return fail('Unauthorized', 401)
 
   const admin = makeServiceClient()
 
-  const { data: target } = await admin.from('users').select('email').eq('id', userId).maybeSingle()
+  const { data: profile } = await admin.from('users').select('id').eq('id', user.id).maybeSingle()
+  if (profile) return ok({ ok: true, invited: true })
 
-  const { error } = await admin.auth.admin.deleteUser(userId)
-  if (error) return fail(error.message, 400)
-
-  if (target?.email) {
-    await admin.from('invited_emails').delete().eq('email', target.email.toLowerCase())
+  const email = user.email.toLowerCase()
+  const { data: invited } = await admin.from('invited_emails').select('email').eq('email', email).maybeSingle()
+  if (invited) {
+    // Invited but profile missing (trigger race) — create it
+    const { data: row } = await admin.from('invited_emails').select('role').eq('email', email).single()
+    await admin.from('users').upsert({ id: user.id, email: user.email, role: row?.role ?? 'sales' })
+    return ok({ ok: true, invited: true, repaired: true })
   }
 
-  return ok({ ok: true })
+  await admin.auth.admin.deleteUser(user.id)
+  return ok({ ok: true, invited: false, rejected: true })
 })

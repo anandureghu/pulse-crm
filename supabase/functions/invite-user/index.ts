@@ -23,7 +23,7 @@ Deno.serve(async (req) => {
   const callerClient = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_ANON_KEY')!,
-    { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } }
+    { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } },
   )
   const { data: { user } } = await callerClient.auth.getUser()
   if (!user) return fail('Unauthorized', 401)
@@ -38,14 +38,23 @@ Deno.serve(async (req) => {
   if (!email) return fail('email is required', 400)
   if (!['admin', 'sales'].includes(role)) return fail('role must be admin or sales', 400)
 
+  const normalized = email.trim().toLowerCase()
   const admin = makeServiceClient()
 
-  const { data: existing } = await admin.from('users').select('id').eq('email', email).maybeSingle()
+  const { data: existing } = await admin.from('users').select('id').ilike('email', normalized).maybeSingle()
   if (existing) return fail('A user with this email already exists', 409)
+
+  // Allowlist BEFORE invite so handle_new_user can create the profile
+  const { error: allowError } = await admin.from('invited_emails').upsert({
+    email: normalized,
+    role,
+    invited_by: user.id,
+  })
+  if (allowError) return fail(allowError.message, 400)
 
   const redirectTo = Deno.env.get('APP_URL') ?? 'https://pulse.picominds.com/set-password'
 
-  const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+  const { data, error } = await admin.auth.admin.inviteUserByEmail(normalized, {
     redirectTo,
   })
   if (error) return fail(error.message, 400)

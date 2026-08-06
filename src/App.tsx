@@ -22,10 +22,32 @@ const Orders = lazy(() => import('./pages/Orders'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Team = lazy(() => import('./pages/Team'))
 
+async function resolveMembership(userId: string): Promise<'admin' | 'sales' | null> {
+  const { data } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle()
+
+  if (data?.role === 'admin' || data?.role === 'sales') return data.role
+
+  // No CRM profile → not invited. Remove auth user and clear session.
+  try {
+    await supabase.functions.invoke('reject-uninvited')
+  } catch {
+    // ignore — still sign out locally
+  }
+  sessionStorage.setItem('pulsrm_not_invited', '1')
+  await supabase.auth.signOut()
+  return null
+}
+
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuthStore()
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading…</div>
-  if (!user) return <Navigate to="/login" replace />
+  const { user, loading, member } = useAuthStore()
+  if (loading || member === null) {
+    return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading…</div>
+  }
+  if (!user || !member) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
@@ -34,42 +56,49 @@ function PageLoader() {
 }
 
 export default function App() {
-  const { setUser, setRole, setLoading } = useAuthStore()
+  const { setUser, setRole, setMember, setLoading } = useAuthStore()
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-      if (session?.user) {
-        supabase
-          .from('users')
-          .select('role')
-          .eq('id', session.user.id)
-          .single()
-          .then(({ data }) => setRole((data?.role ?? null) as 'admin' | 'sales' | null))
+    let cancelled = false
+
+    const applySession = async (user: import('@supabase/supabase-js').User | null) => {
+      setUser(user)
+      if (!user) {
+        setRole(null)
+        setMember(false)
+        setLoading(false)
+        return
       }
+
+      setMember(null)
+      const role = await resolveMembership(user.id)
+      if (cancelled) return
+      if (!role) {
+        setUser(null)
+        setRole(null)
+        setMember(false)
+        setLoading(false)
+        return
+      }
+      setRole(role)
+      setMember(true)
+      setLoading(false)
+      requestNotificationPermission().catch(() => {})
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!cancelled) applySession(session?.user ?? null)
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      const user = session?.user ?? null
-      setUser(user)
-      setLoading(false)
-
-      if (user) {
-        supabase
-          .from('users')
-          .select('role')
-          .eq('id', user.id)
-          .single()
-          .then(({ data }) => setRole((data?.role ?? null) as 'admin' | 'sales' | null))
-        requestNotificationPermission().catch(() => {})
-      } else {
-        setRole(null)
-      }
+      applySession(session?.user ?? null)
     })
 
-    return () => subscription.unsubscribe()
-  }, [setUser, setRole, setLoading])
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
+  }, [setUser, setRole, setMember, setLoading])
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
