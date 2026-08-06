@@ -28,10 +28,24 @@ echo ""
 
 # ── 1. Patch YOUR_DOMAIN placeholder in nginx config ─────────────────────────
 echo ">>> Patching nginx config with domain: $DOMAIN"
-sed -i "s/YOUR_DOMAIN/$DOMAIN/g" nginx/conf.d/evolution.conf
 
+# Restore config if a previous failed run left it in disabled/
+if [ ! -f nginx/conf.d/evolution.conf ] && [ -f nginx/conf.d/disabled/evolution.conf ]; then
+  mv nginx/conf.d/disabled/evolution.conf nginx/conf.d/evolution.conf
+fi
+if [ ! -f nginx/conf.d/evolution.conf ]; then
+  echo "ERROR: nginx/conf.d/evolution.conf is missing. Re-copy the vps/nginx folder from the repo."
+  exit 1
+fi
+sed -i "s/YOUR_DOMAIN/$DOMAIN/g" nginx/conf.d/evolution.conf
 # ── 2. Start Nginx on HTTP only (no cert yet) ─────────────────────────────────
-# Temporarily serve HTTP so Certbot can complete the ACME challenge.
+# Temporarily hide HTTPS config (certs don't exist yet) and serve ACME only.
+echo ">>> Preparing HTTP-only bootstrap config..."
+mkdir -p nginx/conf.d/disabled
+if [ -f nginx/conf.d/evolution.conf ]; then
+  mv nginx/conf.d/evolution.conf nginx/conf.d/disabled/evolution.conf
+fi
+
 cat > nginx/conf.d/_bootstrap.conf << EOF
 server {
     listen 80;
@@ -40,14 +54,13 @@ server {
         root /var/www/certbot;
     }
     location / {
-        return 200 'bootstrapping...';
+        return 200 'bootstrapping SSL...';
         add_header Content-Type text/plain;
     }
 }
 EOF
 
-echo ">>> Starting Nginx for ACME challenge..."
-# Don't wait on evolution (large pull) — only need nginx for the challenge
+echo ">>> Starting Nginx for ACME challenge (no deps)..."
 docker compose up -d --no-deps nginx
 
 sleep 3
@@ -63,15 +76,20 @@ docker compose run --rm --entrypoint certbot certbot certonly \
   --no-eff-email \
   -d "$DOMAIN"
 
-# ── 4. Remove bootstrap config and reload Nginx with full HTTPS config ────────
-echo ">>> Removing bootstrap config, loading full HTTPS config..."
-rm nginx/conf.d/_bootstrap.conf
+# ── 4. Restore full HTTPS config and bring stack up before nginx reload ───────
+echo ">>> Restoring HTTPS nginx config..."
+rm -f nginx/conf.d/_bootstrap.conf
+if [ -f nginx/conf.d/disabled/evolution.conf ]; then
+  mv nginx/conf.d/disabled/evolution.conf nginx/conf.d/evolution.conf
+fi
 
-docker compose exec nginx nginx -s reload
-
-# ── 5. Bring up the full stack ────────────────────────────────────────────────
-echo ">>> Starting full stack..."
+echo ">>> Starting full stack (Evolution must be up for nginx upstream)..."
 docker compose up -d
+
+echo ">>> Reloading Nginx with HTTPS config..."
+sleep 3
+docker compose exec nginx nginx -t
+docker compose exec nginx nginx -s reload
 
 echo ""
 echo "✅ Done! Evolution API is live at https://$DOMAIN"

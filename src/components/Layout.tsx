@@ -83,7 +83,7 @@ export default function Layout() {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
 
         <header className="md:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 flex-shrink-0">
           <button
@@ -98,7 +98,7 @@ export default function Layout() {
           <img src="/logo.svg" alt="pulsrm" className="h-7" />
         </header>
 
-        <main className="flex-1 overflow-auto pb-16 md:pb-0">
+        <main className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden pb-16 md:pb-0">
           <Outlet />
         </main>
       </div>

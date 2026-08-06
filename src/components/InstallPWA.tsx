@@ -5,7 +5,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
 
-const DISMISS_KEY = 'pwa-install-dismissed'
+const INSTALLED_KEY = 'pwa-installed'
 
 function isStandalone() {
   if (window.matchMedia('(display-mode: standalone)').matches) return true
@@ -13,6 +13,10 @@ function isStandalone() {
   // iOS Safari
   if ((navigator as Navigator & { standalone?: boolean }).standalone) return true
   return false
+}
+
+function isMarkedInstalled() {
+  return localStorage.getItem(INSTALLED_KEY) === '1'
 }
 
 function isIosSafari() {
@@ -25,10 +29,17 @@ function isIosSafari() {
 export default function InstallPWA() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
   const [showIosHint, setShowIosHint] = useState(false)
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1')
+  // Session-only dismiss — refresh brings the banner back unless already installed
+  const [dismissed, setDismissed] = useState(false)
+  const [installed, setInstalled] = useState(() => isStandalone() || isMarkedInstalled())
 
   useEffect(() => {
-    if (isStandalone() || dismissed) return
+    if (isStandalone()) {
+      localStorage.setItem(INSTALLED_KEY, '1')
+      setInstalled(true)
+      return
+    }
+    if (installed || dismissed) return
 
     const onBeforeInstall = (e: Event) => {
       e.preventDefault()
@@ -36,6 +47,8 @@ export default function InstallPWA() {
     }
 
     const onInstalled = () => {
+      localStorage.setItem(INSTALLED_KEY, '1')
+      setInstalled(true)
       setDeferred(null)
       setShowIosHint(false)
     }
@@ -49,23 +62,31 @@ export default function InstallPWA() {
       window.removeEventListener('beforeinstallprompt', onBeforeInstall)
       window.removeEventListener('appinstalled', onInstalled)
     }
-  }, [dismissed])
+  }, [dismissed, installed])
 
-  const visible = !dismissed && !isStandalone() && (deferred !== null || showIosHint)
+  // Clear stale dismiss flag from older builds so install can show again
+  useEffect(() => {
+    localStorage.removeItem('pwa-install-dismissed')
+  }, [])
+
+  const visible = !dismissed && !installed && (deferred !== null || showIosHint)
   if (!visible) return null
 
   async function handleInstall() {
     if (deferred) {
       await deferred.prompt()
       const { outcome } = await deferred.userChoice
-      if (outcome === 'accepted') setDeferred(null)
+      if (outcome === 'accepted') {
+        localStorage.setItem(INSTALLED_KEY, '1')
+        setInstalled(true)
+        setDeferred(null)
+      }
       return
     }
     setShowIosHint(true)
   }
 
   function handleDismiss() {
-    localStorage.setItem(DISMISS_KEY, '1')
     setDismissed(true)
   }
 

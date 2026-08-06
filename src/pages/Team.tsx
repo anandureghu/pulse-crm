@@ -106,15 +106,15 @@ export default function Team() {
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
+    <div className="p-4 sm:p-6 max-w-3xl mx-auto w-full">
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="min-w-0">
           <h2 className="text-xl font-semibold text-gray-800">Team</h2>
           <p className="text-sm text-gray-500 mt-0.5">Invite teammates and manage their roles</p>
         </div>
         <button
           onClick={() => setShowInvite(true)}
-          className="bg-green-600 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-green-700"
+          className="flex-shrink-0 bg-green-600 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-green-700"
         >
           + Invite user
         </button>
@@ -184,13 +184,13 @@ export default function Team() {
       )}
 
       {/* Members table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         {loading ? (
           <p className="text-sm text-gray-400 p-6">Loading…</p>
         ) : members.length === 0 ? (
           <p className="text-sm text-gray-400 p-6">No team members yet.</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Email</th>
@@ -202,13 +202,13 @@ export default function Team() {
             <tbody>
               {members.map((m) => (
                 <tr key={m.id} className="border-b border-gray-100 last:border-0">
-                  <td className="px-4 py-3 text-gray-800">
+                  <td className="px-4 py-3 text-gray-800 whitespace-nowrap">
                     {m.email}
                     {m.id === user?.id && (
                       <span className="ml-2 text-xs text-gray-400">(you)</span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     {editingPhone === m.id ? (
                       <div className="flex items-center gap-1">
                         <input
@@ -242,7 +242,7 @@ export default function Team() {
                       </button>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     {m.id === user?.id ? (
                       <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 capitalize">
                         {m.role}
@@ -258,7 +258,7 @@ export default function Team() {
                       </select>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
                     {m.id !== user?.id && (
                       <button
                         onClick={() => handleRemove(m.id, m.email)}

@@ -306,7 +306,7 @@ export default function Orders() {
   }
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-4 sm:p-6 max-w-5xl w-full min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <h2 className="text-xl font-semibold text-gray-800">Orders</h2>
@@ -556,8 +556,8 @@ export default function Orders() {
               No products cached yet. Click <span className="font-medium text-gray-600">Sync products</span> to pull from Shopify.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto -mx-1 px-1">
+              <table className="w-full min-w-[640px] text-sm">
                 <thead>
                   <tr className="text-left text-gray-500 border-b border-gray-100">
                     <th className="py-2 pr-3 font-medium">Product</th>
@@ -604,8 +604,8 @@ export default function Orders() {
           {recent.length === 0 ? (
             <p className="text-sm text-gray-400">No orders created yet.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto -mx-1 px-1">
+              <table className="w-full min-w-[640px] text-sm">
                 <thead>
                   <tr className="text-left text-gray-500 border-b border-gray-100">
                     <th className="py-2 pr-3 font-medium">Order</th>

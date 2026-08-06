@@ -176,9 +176,9 @@ export default function Inbox() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0 min-w-0">
       {/* Sidebar — full screen on mobile when no conv selected, hidden when chat is open */}
-      <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0`}>
+      <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0 min-h-0`}>
         <div className="p-4 border-b border-gray-200 space-y-2">
           <h2 className="font-semibold text-gray-800">Inbox</h2>
           <input
@@ -226,7 +226,7 @@ export default function Inbox() {
       </div>
 
       {/* Chat pane — full screen on mobile when conv selected, hidden otherwise */}
-      <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-gray-50 min-w-0`}>
+      <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-gray-50 min-w-0 min-h-0`}>
         {conv ? (
           <>
             <div className="bg-white border-b border-gray-200 px-3 py-3 flex items-center gap-2">

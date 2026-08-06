@@ -49,7 +49,7 @@ export default function Calendar() {
   const nextMonth = () => setViewDate(new Date(year, month + 1, 1))
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6 max-w-full min-w-0">
       <div className="flex items-center gap-4 mb-6">
         <h2 className="text-xl font-semibold text-gray-800">Calendar</h2>
         <div className="flex items-center gap-2 ml-auto">

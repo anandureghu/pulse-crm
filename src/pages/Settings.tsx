@@ -396,7 +396,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6 max-w-full min-w-0">
       <h2 className="text-xl font-semibold text-gray-800 mb-6">Settings</h2>
       <div className="max-w-2xl space-y-5">
 

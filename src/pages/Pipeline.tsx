@@ -92,7 +92,7 @@ export default function Pipeline() {
   const mobileCards = activeEnquiries.filter((e) => e.status === mobileStage)
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       <div className="flex items-center justify-between px-4 pt-4 pb-3 md:px-6 md:pt-6">
         <h2 className="text-lg md:text-xl font-semibold text-gray-800">Sales Pipeline</h2>
         <span className="text-sm text-gray-400">{activeEnquiries.length} active</span>
@@ -145,9 +145,9 @@ export default function Pipeline() {
       </div>
 
       {/* Desktop: kanban drag-and-drop */}
-      <div className="hidden md:block flex-1 overflow-hidden px-6 pb-6">
+      <div className="hidden md:block flex-1 min-h-0 overflow-hidden px-6 pb-6">
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-          <div className="flex gap-3 overflow-x-auto pb-4 h-full">
+          <div className="flex gap-3 overflow-x-auto pb-4 h-full min-h-0">
             {STAGES.map((stage) => (
               <StageColumn
                 key={stage.key}

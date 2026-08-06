@@ -27,7 +27,7 @@ export default function Dashboard() {
   const recentEnquiries = enquiries.slice(0, 5)
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6 max-w-full min-w-0">
       <h2 className="text-xl font-semibold text-gray-800 mb-6">Dashboard</h2>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {statCards.map((card) => (
