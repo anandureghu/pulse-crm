@@ -38,10 +38,21 @@ export interface OrderCustomerDto {
   country: string
 }
 
-export interface OrderDto {
-  customer: OrderCustomerDto
+/** One product line from the prompt (matched to Shopify by unit price). */
+export interface OrderLineItemDto {
   amount: number
   quantity: number
+  hint?: string | null
+}
+
+export interface OrderDto {
+  customer: OrderCustomerDto
+  /** Product lines — one or more. Prefer this over legacy quantity. */
+  lineItems: OrderLineItemDto[]
+  /** Order total (sum of line amounts × qty, plus shipping if any). */
+  amount: number
+  /** @deprecated use lineItems[0].quantity — kept for older clients */
+  quantity?: number
   tags: string[]
   note?: string | null
   financialStatus?: 'pending' | 'paid'
@@ -59,6 +70,83 @@ export function normalizePriceKey(amount: number | string): string {
 
 export function normalizePhoneDigits(phone: string): string {
   return phone.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '')
+}
+
+export function isAddressComplete(c: OrderCustomerDto): boolean {
+  return Boolean(c.address1?.trim() && c.city?.trim() && c.zip?.trim())
+}
+
+interface ShopifyAddress {
+  address1?: string
+  address2?: string
+  city?: string
+  province?: string
+  zip?: string
+  country_code?: string
+  country?: string
+  first_name?: string
+  last_name?: string
+  phone?: string
+  default?: boolean
+}
+
+interface ShopifyCustomer {
+  id: number
+  first_name?: string
+  last_name?: string
+  email?: string
+  phone?: string
+  default_address?: ShopifyAddress
+  addresses?: ShopifyAddress[]
+}
+
+/** Find Shopify customer by phone (and optionally email). */
+export async function findShopifyCustomer(
+  cfg: ShopifyConfig,
+  phoneDigits: string,
+  email?: string | null,
+): Promise<ShopifyCustomer | null> {
+  const queryParts: string[] = [`phone:${phoneDigits}`]
+  if (email?.trim()) queryParts.push(`email:${email.trim()}`)
+  const searchQ = encodeURIComponent(queryParts.join(' OR '))
+  const { data } = await shopifyFetch<{ customers: ShopifyCustomer[] }>(
+    cfg,
+    `/customers/search.json?query=${searchQ}`,
+  )
+  return data.customers?.[0] ?? null
+}
+
+/**
+ * Fill missing name/address fields from an existing Shopify customer.
+ * Prompt values win when already present.
+ */
+export function mergeCustomerFromShopify(
+  customer: OrderCustomerDto,
+  shopify: ShopifyCustomer,
+): OrderCustomerDto {
+  const addr =
+    shopify.default_address
+    || shopify.addresses?.find((a) => a.default)
+    || shopify.addresses?.[0]
+
+  const country =
+    customer.country?.trim()
+    || addr?.country_code
+    || (addr?.country === 'India' ? 'IN' : addr?.country)
+    || 'IN'
+
+  return {
+    firstName: customer.firstName?.trim() || shopify.first_name || addr?.first_name || '',
+    lastName: customer.lastName?.trim() || shopify.last_name || addr?.last_name || '',
+    phone: customer.phone,
+    email: customer.email?.trim() || shopify.email || null,
+    address1: customer.address1?.trim() || addr?.address1 || '',
+    address2: customer.address2?.trim() || addr?.address2 || null,
+    city: customer.city?.trim() || addr?.city || '',
+    province: customer.province?.trim() || addr?.province || null,
+    zip: customer.zip?.trim() || addr?.zip || '',
+    country,
+  }
 }
 
 export async function loadShopifyConfig(): Promise<ShopifyConfig> {

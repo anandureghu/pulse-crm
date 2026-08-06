@@ -3,13 +3,25 @@ import {
   loadShopifyConfig,
   shopifyFetch,
   normalizePhoneDigits,
+  isAddressComplete,
+  findShopifyCustomer,
+  mergeCustomerFromShopify,
   type OrderDto,
 } from '../_shared/shopify.ts'
 import { ensureProvince } from '../_shared/address.ts'
 
+interface SelectedLine {
+  variantId: number
+  quantity: number
+  amount?: number
+}
+
 interface CreateBody {
   dto: OrderDto
-  variantId: number
+  /** Multi-product selection from the UI */
+  lineItems?: SelectedLine[]
+  /** @deprecated single-variant create — still accepted */
+  variantId?: number
   prompt?: string
 }
 
@@ -32,10 +44,20 @@ Deno.serve(async (req) => {
     return err('Invalid JSON')
   }
 
-  let { dto, variantId, prompt } = body
+  let { dto, prompt } = body
   if (!dto?.customer) return err('dto.customer required')
-  if (!variantId) return err('variantId required')
   if (dto.amount == null) return err('dto.amount required')
+
+  let selected: SelectedLine[] = Array.isArray(body.lineItems)
+    ? body.lineItems.filter((l) => l?.variantId && (l.quantity ?? 0) > 0)
+    : []
+
+  if (selected.length === 0 && body.variantId) {
+    const qty = dto.lineItems?.[0]?.quantity || dto.quantity || 1
+    selected = [{ variantId: body.variantId, quantity: qty, amount: dto.lineItems?.[0]?.amount ?? dto.amount }]
+  }
+
+  if (selected.length === 0) return err('lineItems (or variantId) required')
 
   const phoneDigits = normalizePhoneDigits(dto.customer.phone || '')
   if (phoneDigits.length < 10) return err('Invalid phone number')
@@ -43,11 +65,29 @@ Deno.serve(async (req) => {
   let shopifyCustomerId: string | null = null
   let shopifyOrderId: string | null = null
   let shopifyOrderName: string | null = null
+  const variantIdsLog = selected.map((l) => String(l.variantId)).join(',')
 
   try {
     const cfg = await loadShopifyConfig()
 
-    // Fill Indian state if missing (PIN/city lookup, then OpenAI)
+    // Returning customer: fill missing address from Shopify before validating
+    {
+      const existing = await findShopifyCustomer(cfg, phoneDigits, dto.customer.email)
+      if (existing) {
+        shopifyCustomerId = String(existing.id)
+        dto = { ...dto, customer: mergeCustomerFromShopify(dto.customer, existing) }
+      }
+    }
+
+    if (!isAddressComplete(dto.customer)) {
+      return err(
+        shopifyCustomerId
+          ? 'Customer exists in Shopify but has no shipping address. Add address and retry.'
+          : 'Shipping address is required for new customers.',
+        400,
+      )
+    }
+
     const { data: aiRow } = await supabase.from('settings').select('value').eq('key', 'ai_config').maybeSingle()
     const aiCfg = aiRow?.value as { apiKey?: string; model?: string } | null
     dto = {
@@ -61,20 +101,7 @@ Deno.serve(async (req) => {
       return err('State/province is required for Indian addresses. Add province (e.g. Kerala) and retry.', 400)
     }
 
-    // ── Find or create customer ──────────────────────────────────────────────
-    const queryParts: string[] = [`phone:${phoneDigits}`]
-    if (dto.customer.email?.trim()) {
-      queryParts.push(`email:${dto.customer.email.trim()}`)
-    }
-    const searchQ = encodeURIComponent(queryParts.join(' OR '))
-    const { data: searchData } = await shopifyFetch<{
-      customers: Array<{ id: number; phone?: string; email?: string }>
-    }>(cfg, `/customers/search.json?query=${searchQ}`)
-
-    const existing = searchData.customers?.[0]
-    if (existing) {
-      shopifyCustomerId = String(existing.id)
-    } else {
+    if (!shopifyCustomerId) {
       const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
       const { data: created } = await shopifyFetch<{ customer: { id: number } }>(cfg, '/customers.json', {
         method: 'POST',
@@ -110,7 +137,6 @@ Deno.serve(async (req) => {
       .filter(Boolean)
     const tagsStr = tags.join(', ')
     const isCod = tags.some((t) => t.toUpperCase() === 'COD') || dto.financialStatus === 'pending'
-    const quantity = dto.quantity && dto.quantity > 0 ? dto.quantity : 1
 
     const shippingAddress = {
       first_name: dto.customer.firstName || 'Customer',
@@ -124,9 +150,11 @@ Deno.serve(async (req) => {
       phone: phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`,
     }
 
-    // Shopify rejects tags: "" — omit when empty; must be a comma-separated string when set
     const order: Record<string, unknown> = {
-      line_items: [{ variant_id: Number(variantId), quantity }],
+      line_items: selected.map((l) => ({
+        variant_id: Number(l.variantId),
+        quantity: Math.max(1, Number(l.quantity) || 1),
+      })),
       customer: { id: Number(shopifyCustomerId) },
       shipping_address: shippingAddress,
       billing_address: shippingAddress,
@@ -175,10 +203,10 @@ Deno.serve(async (req) => {
       phone: phoneDigits,
       email: dto.customer.email || null,
       amount: dto.amount,
-      variant_id: String(variantId),
+      variant_id: variantIdsLog,
       tags,
       prompt: prompt || null,
-      parsed_dto: dto,
+      parsed_dto: { ...dto, selectedLineItems: selected },
       status: 'created',
       created_by: user.id,
     })
@@ -201,7 +229,7 @@ Deno.serve(async (req) => {
       phone: phoneDigits,
       email: dto.customer.email || null,
       amount: dto.amount,
-      variant_id: String(variantId),
+      variant_id: variantIdsLog,
       tags: Array.isArray(dto.tags) ? dto.tags : [],
       prompt: prompt || null,
       parsed_dto: dto,

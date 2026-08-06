@@ -31,10 +31,17 @@ interface OrderCustomerDto {
   country: string
 }
 
-interface OrderDto {
-  customer: OrderCustomerDto
+interface OrderLineItemDto {
   amount: number
   quantity: number
+  hint?: string | null
+}
+
+interface OrderDto {
+  customer: OrderCustomerDto
+  lineItems: OrderLineItemDto[]
+  amount: number
+  quantity?: number
   tags: string[]
   note?: string | null
   financialStatus?: 'pending' | 'paid'
@@ -66,6 +73,23 @@ function priceKey(amount: number): string {
   return Number(amount).toFixed(2)
 }
 
+function scoreHint(variant: CachedVariant, hint: string | null | undefined): number {
+  if (!hint?.trim()) return 0
+  const h = hint.toLowerCase()
+  const title = `${variant.title} ${variant.variantTitle} ${variant.sku}`.toLowerCase()
+  if (title.includes(h) || h.includes(variant.title.toLowerCase())) return 10
+  const words = h.split(/\s+/).filter((w) => w.length > 2)
+  return words.reduce((s, w) => s + (title.includes(w) ? 1 : 0), 0)
+}
+
+function pickBestVariant(matches: CachedVariant[], hint?: string | null): number | null {
+  if (matches.length === 0) return null
+  if (matches.length === 1) return matches[0].variantId
+  if (!hint?.trim()) return null
+  const ranked = [...matches].sort((a, b) => scoreHint(b, hint) - scoreHint(a, hint))
+  return scoreHint(ranked[0], hint) > 0 ? ranked[0].variantId : null
+}
+
 async function invokeFunction<T>(name: string, body: unknown): Promise<T> {
   const { data: { session } } = await supabase.auth.getSession()
   const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`, {
@@ -86,7 +110,8 @@ export default function Orders() {
   const [prompt, setPrompt] = useState('')
   const [dto, setDto] = useState<OrderDto | null>(null)
   const [cache, setCache] = useState<ShopifyProductsCache | null>(null)
-  const [selectedVariantId, setSelectedVariantId] = useState<number | null>(null)
+  /** Selected variant id per line index */
+  const [selectedByLine, setSelectedByLine] = useState<(number | null)[]>([])
   const [parsing, setParsing] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -135,22 +160,38 @@ export default function Orders() {
     )
   }, [allProducts, productSearch])
 
-  const matches = useMemo(() => {
-    if (!dto || !cache?.byPrice) return []
-    return cache.byPrice[priceKey(dto.amount)] ?? []
+  const lineItems = dto?.lineItems?.length
+    ? dto.lineItems
+    : dto
+      ? [{ amount: dto.amount, quantity: dto.quantity || 1, hint: null as string | null }]
+      : []
+
+  const lineMatches = useMemo(() => {
+    if (!cache?.byPrice) return lineItems.map(() => [] as CachedVariant[])
+    return lineItems.map((li) => cache.byPrice[priceKey(li.amount)] ?? [])
+  }, [cache, lineItems])
+
+  // Auto-select variants when line items / cache change
+  useEffect(() => {
+    if (!dto) {
+      setSelectedByLine([])
+      return
+    }
+    setSelectedByLine((prev) =>
+      lineItems.map((li, i) => {
+        const matches = lineMatches[i] ?? []
+        const prevId = prev[i] ?? null
+        if (prevId && matches.some((m) => m.variantId === prevId)) return prevId
+        return pickBestVariant(matches, li.hint)
+      }),
+    )
+    // Only re-run when dto identity / amounts change, not on every selectedByLine edit
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dto, cache])
 
-  useEffect(() => {
-    if (matches.length === 1) {
-      setSelectedVariantId(matches[0].variantId)
-    } else if (matches.length === 0) {
-      setSelectedVariantId(null)
-    } else {
-      setSelectedVariantId((prev) =>
-        prev && matches.some((m) => m.variantId === prev) ? prev : null,
-      )
-    }
-  }, [matches])
+  const allLinesReady = lineItems.length > 0
+    && selectedByLine.length === lineItems.length
+    && selectedByLine.every((id, i) => id != null && (lineMatches[i]?.length ?? 0) > 0)
 
   const handleSync = async () => {
     setSyncing(true)
@@ -175,10 +216,27 @@ export default function Orders() {
     }
     setParsing(true)
     try {
-      const res = await invokeFunction<{ dto: OrderDto }>('parse-order-prompt', { prompt })
-      setDto(res.dto)
-      setTagsInput((res.dto.tags ?? []).join(', '))
-      toast('Prompt parsed — review details before creating', 'success')
+      const res = await invokeFunction<{
+        dto: OrderDto
+        customerSource?: 'prompt' | 'shopify' | 'new'
+        shopifyCustomerId?: string | null
+      }>('parse-order-prompt', { prompt })
+      const normalized: OrderDto = {
+        ...res.dto,
+        lineItems: res.dto.lineItems?.length
+          ? res.dto.lineItems
+          : [{ amount: res.dto.amount, quantity: res.dto.quantity || 1, hint: null }],
+      }
+      setDto(normalized)
+      setTagsInput((normalized.tags ?? []).join(', '))
+      setSelectedByLine([])
+      if (res.customerSource === 'shopify') {
+        toast('Existing Shopify customer — name & address loaded from Shopify', 'success')
+      } else if (normalized.lineItems.length > 1) {
+        toast(`Parsed ${normalized.lineItems.length} products — review before creating`, 'success')
+      } else {
+        toast('Prompt parsed — review details before creating', 'success')
+      }
     } catch (e) {
       toast((e as Error).message, 'error')
     } finally {
@@ -190,24 +248,32 @@ export default function Orders() {
     setDto((d) => (d ? { ...d, customer: { ...d.customer, [key]: value } } : d))
   }
 
+  const updateLine = (index: number, patch: Partial<OrderLineItemDto>) => {
+    setDto((d) => {
+      if (!d) return d
+      const lines = [...(d.lineItems?.length ? d.lineItems : [{ amount: d.amount, quantity: 1, hint: null }])]
+      lines[index] = { ...lines[index], ...patch }
+      const total = lines.reduce((s, li) => s + li.amount * li.quantity, 0)
+      return { ...d, lineItems: lines, amount: total }
+    })
+  }
+
   const handleCreate = async () => {
     if (!dto) {
       toast('Parse a prompt first', 'error')
       return
     }
-    if (!selectedVariantId) {
-      toast(matches.length === 0
-        ? 'No product at this price — sync products or fix amount'
-        : 'Select a product variant', 'error')
+    if (!allLinesReady) {
+      toast('Resolve every line item (sync products or pick variants)', 'error')
       return
     }
     const tags = tagsInput
       .split(',')
       .map((t) => t.trim())
       .filter(Boolean)
-    // Prefer tags from the editable field; fall back to parsed dto tags
     const mergedTags = tags.length > 0 ? tags : (dto.tags ?? []).map((t) => String(t).trim()).filter(Boolean)
-    const payload: OrderDto = { ...dto, tags: mergedTags }
+    const lines = lineItems
+    const payload: OrderDto = { ...dto, lineItems: lines, tags: mergedTags }
 
     setCreating(true)
     try {
@@ -216,14 +282,18 @@ export default function Orders() {
         adminUrl: string
       }>('create-shopify-order', {
         dto: payload,
-        variantId: selectedVariantId,
+        lineItems: lines.map((li, i) => ({
+          variantId: selectedByLine[i]!,
+          quantity: li.quantity,
+          amount: li.amount,
+        })),
         prompt,
       })
       toast(`Order ${res.orderName} created`, 'success')
       setPrompt('')
       setDto(null)
       setTagsInput('')
-      setSelectedVariantId(null)
+      setSelectedByLine([])
       await loadRecent()
       setTab('orders')
       if (res.adminUrl) window.open(res.adminUrl, '_blank', 'noopener,noreferrer')
@@ -292,7 +362,7 @@ export default function Orders() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={8}
-                placeholder={`Sandhu U\nKottur house\nKunnamangalam po 673571\nNear IIM\nCalicut\n9400877821\namount 1999\nCOD`}
+                placeholder={`Sandhu U\nKottur house\nKunnamangalam po 673571\nNear IIM\nCalicut\n9400877821\nEssential kit 999\nFoam wash 999\nCOD`}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
               />
             </div>
@@ -321,22 +391,12 @@ export default function Orders() {
                 <Field label="PIN / zip" value={dto.customer.zip} onChange={(v) => updateCustomer('zip', v)} />
                 <Field label="Country" value={dto.customer.country} onChange={(v) => updateCustomer('country', v)} />
                 <div>
-                  <label className="block text-sm text-gray-600 mb-1">Amount</label>
+                  <label className="block text-sm text-gray-600 mb-1">Order total</label>
                   <input
                     type="number"
                     step="0.01"
                     value={dto.amount}
                     onChange={(e) => setDto({ ...dto, amount: parseFloat(e.target.value) || 0 })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">Quantity</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={dto.quantity}
-                    onChange={(e) => setDto({ ...dto, quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                   />
                 </div>
@@ -372,61 +432,104 @@ export default function Orders() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-100 pt-4">
-                <h4 className="text-sm font-medium text-gray-700 mb-2">
-                  Product at ₹{priceKey(dto.amount)}
+              <div className="border-t border-gray-100 pt-4 space-y-4">
+                <h4 className="text-sm font-medium text-gray-700">
+                  Products ({lineItems.length})
                 </h4>
-                {matches.length === 0 && (
-                  <p className="text-sm text-red-500">
-                    No product at this price — sync products or check the amount.
-                  </p>
-                )}
-                {matches.length === 1 && (
-                  <p className="text-sm text-gray-600">
-                    Auto-selected: <span className="font-medium">{matches[0].title}</span>
-                    {matches[0].variantTitle && matches[0].variantTitle !== 'Default Title'
-                      ? ` — ${matches[0].variantTitle}`
-                      : ''}
-                    {matches[0].sku ? ` · SKU ${matches[0].sku}` : ''}
-                  </p>
-                )}
-                {matches.length > 1 && (
-                  <div className="space-y-2">
-                    <p className="text-sm text-amber-600 mb-2">
-                      Multiple products match this price — pick one:
-                    </p>
-                    {matches.map((m) => (
-                      <label
-                        key={m.variantId}
-                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${
-                          selectedVariantId === m.variantId
-                            ? 'border-green-500 bg-green-50'
-                            : 'border-gray-200 hover:bg-gray-50'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="variant"
-                          checked={selectedVariantId === m.variantId}
-                          onChange={() => setSelectedVariantId(m.variantId)}
-                          className="mt-1"
-                        />
-                        <div className="text-sm">
-                          <div className="font-medium text-gray-800">{m.title}</div>
-                          <div className="text-gray-500">
-                            {m.variantTitle !== 'Default Title' ? m.variantTitle : 'Default'}
-                            {m.sku ? ` · ${m.sku}` : ''} · ₹{m.price}
-                          </div>
+                {lineItems.map((li, i) => {
+                  const matches = lineMatches[i] ?? []
+                  const selected = selectedByLine[i] ?? null
+                  return (
+                    <div key={i} className="rounded-lg border border-gray-200 p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-gray-800">
+                          Line {i + 1}
+                          {li.hint ? <span className="font-normal text-gray-500"> · {li.hint}</span> : null}
+                        </p>
+                        <div className="flex gap-2 items-center text-sm">
+                          <label className="text-gray-500">
+                            ₹
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={li.amount}
+                              onChange={(e) => updateLine(i, { amount: parseFloat(e.target.value) || 0 })}
+                              className="ml-1 w-24 border border-gray-300 rounded-lg px-2 py-1"
+                            />
+                          </label>
+                          <label className="text-gray-500">
+                            Qty
+                            <input
+                              type="number"
+                              min={1}
+                              value={li.quantity}
+                              onChange={(e) => updateLine(i, { quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                              className="ml-1 w-16 border border-gray-300 rounded-lg px-2 py-1"
+                            />
+                          </label>
                         </div>
-                      </label>
-                    ))}
-                  </div>
-                )}
+                      </div>
+
+                      {matches.length === 0 && (
+                        <p className="text-sm text-red-500">
+                          No product at ₹{priceKey(li.amount)} — sync or fix price.
+                        </p>
+                      )}
+                      {matches.length === 1 && (
+                        <p className="text-sm text-gray-600">
+                          Auto-selected: <span className="font-medium">{matches[0].title}</span>
+                          {matches[0].variantTitle && matches[0].variantTitle !== 'Default Title'
+                            ? ` — ${matches[0].variantTitle}`
+                            : ''}
+                          {matches[0].sku ? ` · SKU ${matches[0].sku}` : ''}
+                        </p>
+                      )}
+                      {matches.length > 1 && (
+                        <div className="space-y-2">
+                          <p className="text-sm text-amber-600">
+                            Multiple products at this price — pick one:
+                          </p>
+                          {matches.map((m) => (
+                            <label
+                              key={m.variantId}
+                              className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${
+                                selected === m.variantId
+                                  ? 'border-green-500 bg-green-50'
+                                  : 'border-gray-200 hover:bg-gray-50'
+                              }`}
+                            >
+                              <input
+                                type="radio"
+                                name={`variant-${i}`}
+                                checked={selected === m.variantId}
+                                onChange={() =>
+                                  setSelectedByLine((prev) => {
+                                    const next = [...prev]
+                                    next[i] = m.variantId
+                                    return next
+                                  })
+                                }
+                                className="mt-1"
+                              />
+                              <div className="text-sm">
+                                <div className="font-medium text-gray-800">{m.title}</div>
+                                <div className="text-gray-500">
+                                  {m.variantTitle !== 'Default Title' ? m.variantTitle : 'Default'}
+                                  {m.sku ? ` · ${m.sku}` : ''} · ₹{m.price}
+                                </div>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
 
               <button
                 onClick={handleCreate}
-                disabled={creating || !selectedVariantId}
+                disabled={creating || !allLinesReady}
                 className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
               >
                 {creating ? 'Creating…' : 'Create Shopify order'}
