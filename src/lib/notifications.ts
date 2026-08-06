@@ -47,6 +47,6 @@ async function saveSubscription(subscription: PushSubscription) {
 
 export function showLocalNotification(title: string, body: string) {
   if (Notification.permission === 'granted') {
-    new Notification(title, { body, icon: '/favicon.ico' })
+    new Notification(title, { body, icon: '/pwa-192x192.png' })
   }
 }

@@ -4,7 +4,7 @@
 
 | Container | Image | Purpose |
 |---|---|---|
-| `crm_evolution` | `atendai/evolution-api:v2.2.3` | WhatsApp gateway |
+| `crm_evolution` | `evoapicloud/evolution-api:latest` | WhatsApp gateway |
 | `crm_postgres` | `postgres:16-alpine` | Evolution's database |
 | `crm_redis` | `redis:7-alpine` | Session cache |
 | `crm_nginx` | `nginx:1.25-alpine` | Reverse proxy + TLS termination |
@@ -113,16 +113,12 @@ docker compose up -d evolution
 
 ## Updating Evolution API version
 
-Edit `docker-compose.yml`, change the image tag:
-```yaml
-image: atendai/evolution-api:v2.2.4   # update version here
-```
-Then:
 ```bash
 docker compose pull evolution
 docker compose up -d evolution
 ```
 
+Image: `evoapicloud/evolution-api:latest` (same as local compose).
 ## Firewall (UFW)
 
 ```bash

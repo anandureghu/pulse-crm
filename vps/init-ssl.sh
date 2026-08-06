@@ -47,13 +47,15 @@ server {
 EOF
 
 echo ">>> Starting Nginx for ACME challenge..."
-docker compose up -d nginx
+# Don't wait on evolution (large pull) — only need nginx for the challenge
+docker compose up -d --no-deps nginx
 
 sleep 3
 
 # ── 3. Request certificate ────────────────────────────────────────────────────
 echo ">>> Requesting TLS certificate from Let's Encrypt..."
-docker compose run --rm certbot certonly \
+# Override the renew-loop entrypoint from docker-compose.yml
+docker compose run --rm --entrypoint certbot certbot certonly \
   --webroot \
   --webroot-path /var/www/certbot \
   --email "$EMAIL" \

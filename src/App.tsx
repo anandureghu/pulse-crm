@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase'
 import { useAuthStore } from './store/authStore'
 import { requestNotificationPermission, showLocalNotification } from './lib/notifications'
 import ErrorBoundary from './components/ErrorBoundary'
+import InstallPWA from './components/InstallPWA'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import { Toaster } from './components/Toast'
@@ -82,6 +83,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Toaster />
+      <InstallPWA />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
