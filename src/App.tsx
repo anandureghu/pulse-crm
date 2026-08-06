@@ -7,6 +7,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import InstallPWA from './components/InstallPWA'
 import Layout from './components/Layout'
 import Login from './pages/Login'
+import SetPassword from './pages/SetPassword'
 import { Toaster } from './components/Toast'
 
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -87,6 +88,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/set-password" element={<SetPassword />} />
           <Route
             path="/"
             element={
