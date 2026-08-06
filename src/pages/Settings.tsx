@@ -91,13 +91,20 @@ export default function Settings() {
   useEffect(() => {
     supabase.from('settings').select('value').eq('key', 'evolution').maybeSingle().then(({ data }) => {
       if (data?.value) {
-        const d = data.value as Record<string, string>
+        const d = data.value as {
+          apiUrl?: string
+          activeInstance?: string
+          instanceName?: string
+          apiKey?: string
+          webhookUrl?: string
+          displayNames?: Record<string, string>
+        }
         setSettings({
           apiUrl: d.apiUrl ?? '',
           activeInstance: d.activeInstance ?? d.instanceName ?? '',
           apiKey: d.apiKey ?? '',
           webhookUrl: d.webhookUrl ?? '',
-          displayNames: (d.displayNames as Record<string, string>) ?? {},
+          displayNames: d.displayNames ?? {},
         })
       }
     })

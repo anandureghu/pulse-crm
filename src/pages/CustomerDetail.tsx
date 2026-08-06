@@ -220,7 +220,7 @@ export default function CustomerDetail() {
         <ProfileTab customer={customer} latestEnquiry={latestEnquiry} users={users} onAssign={handleAssign} />
       )}
       {tab === 'timeline' && <TimelineTab activities={activities} />}
-      {tab === 'whatsapp' && <WhatsAppTab messages={messages} />}
+      {tab === 'whatsapp' && <WhatsAppTab messages={messages} customerPhone={customer.phone} />}
       {tab === 'notes' && (
         <NotesTab
           notes={notes}
@@ -425,14 +425,20 @@ function TimelineTab({ activities }: { activities: ReturnType<typeof useActiviti
   )
 }
 
-function WhatsAppTab({ messages }: { messages: ReturnType<typeof useMessages> }) {
+function WhatsAppTab({
+  messages,
+  customerPhone,
+}: {
+  messages: ReturnType<typeof useMessages>
+  customerPhone: string
+}) {
   if (messages.length === 0) {
     return <p className="text-sm text-gray-400">No WhatsApp messages yet.</p>
   }
   return (
     <div className="max-w-lg w-full space-y-2 bg-gray-50 rounded-xl p-4">
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} msg={msg} customerPhone={customer.phone} />
+        <MessageBubble key={msg.id} msg={msg} customerPhone={customerPhone} />
       ))}
     </div>
   )
