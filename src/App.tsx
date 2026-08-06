@@ -16,6 +16,7 @@ const Pipeline = lazy(() => import('./pages/Pipeline'))
 const Calendar = lazy(() => import('./pages/Calendar'))
 const Followups = lazy(() => import('./pages/Followups'))
 const Analytics = lazy(() => import('./pages/Analytics'))
+const Orders = lazy(() => import('./pages/Orders'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Team = lazy(() => import('./pages/Team'))
 
@@ -100,6 +101,7 @@ export default function App() {
             <Route path="calendar" element={<Suspense fallback={<PageLoader />}><Calendar /></Suspense>} />
             <Route path="followups" element={<Suspense fallback={<PageLoader />}><Followups /></Suspense>} />
             <Route path="analytics" element={<Suspense fallback={<PageLoader />}><Analytics /></Suspense>} />
+            <Route path="orders" element={<Suspense fallback={<PageLoader />}><Orders /></Suspense>} />
             <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
             <Route path="team" element={<Suspense fallback={<PageLoader />}><Team /></Suspense>} />
           </Route>

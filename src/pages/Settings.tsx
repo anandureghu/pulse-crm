@@ -8,6 +8,13 @@ interface AiConfig {
   enabled: boolean
 }
 
+interface ShopifyConfig {
+  shopDomain: string
+  clientId: string
+  clientSecret: string
+  apiVersion: string
+}
+
 interface EvolutionSettings {
   apiUrl: string
   activeInstance: string
@@ -60,6 +67,11 @@ export default function Settings() {
   })
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
+  const [shopifyConfig, setShopifyConfig] = useState<ShopifyConfig>({
+    shopDomain: '', clientId: '', clientSecret: '', apiVersion: '2024-10',
+  })
+  const [shopifySaved, setShopifySaved] = useState(false)
+  const [shopifySaving, setShopifySaving] = useState(false)
   const settingsRef = useRef(settings)
   useEffect(() => { settingsRef.current = settings }, [settings])
 
@@ -97,6 +109,17 @@ export default function Settings() {
           model: (d.model as string) ?? 'gpt-4o-mini',
           systemPrompt: (d.systemPrompt as string) ?? '',
           enabled: (d.enabled as boolean) ?? false,
+        })
+      }
+    })
+    supabase.from('settings').select('value').eq('key', 'shopify_config').maybeSingle().then(({ data }) => {
+      if (data?.value) {
+        const d = data.value as unknown as Record<string, string>
+        setShopifyConfig({
+          shopDomain: d.shopDomain ?? '',
+          clientId: d.clientId ?? '',
+          clientSecret: d.clientSecret ?? '',
+          apiVersion: d.apiVersion ?? '2024-10',
         })
       }
     })
@@ -344,6 +367,18 @@ export default function Settings() {
   const _isBusy = (name: string, op?: string) =>
     instanceAction?.name === name && (!op || instanceAction.op === op)
   void _isBusy
+
+  const handleSaveShopify = async () => {
+    setShopifySaving(true)
+    await supabase.from('settings').upsert({
+      key: 'shopify_config',
+      value: shopifyConfig as unknown as Record<string, unknown>,
+      updated_at: new Date().toISOString(),
+    })
+    setShopifySaving(false)
+    setShopifySaved(true)
+    setTimeout(() => setShopifySaved(false), 2000)
+  }
 
   const handleSaveAi = async () => {
     setAiSaving(true)
@@ -635,6 +670,69 @@ supabase functions deploy`}</pre>
             Events configured: <code className="bg-gray-100 px-1 rounded">MESSAGES_UPSERT</code>{' '}
             <code className="bg-gray-100 px-1 rounded">MESSAGES_UPDATE</code>{' '}
             <code className="bg-gray-100 px-1 rounded">CONNECTION_UPDATE</code>
+          </div>
+        </div>
+
+        {/* ── Shopify ── */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <h3 className="font-semibold text-gray-700 mb-1">Shopify</h3>
+          <p className="text-xs text-gray-400 mb-4">
+            Use Dev Dashboard app credentials (Client ID + Client secret). Tokens are fetched automatically.
+            Scopes:{' '}
+            <code className="bg-gray-100 px-1 rounded">read_products</code>{' '}
+            <code className="bg-gray-100 px-1 rounded">read_customers</code>{' '}
+            <code className="bg-gray-100 px-1 rounded">write_customers</code>{' '}
+            <code className="bg-gray-100 px-1 rounded">write_orders</code>
+            . Install the app on your store first.
+          </p>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Shop domain</label>
+              <input
+                type="text"
+                value={shopifyConfig.shopDomain}
+                onChange={(e) => setShopifyConfig((c) => ({ ...c, shopDomain: e.target.value }))}
+                placeholder="autolust-9782.myshopify.com"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Client ID</label>
+              <input
+                type="text"
+                value={shopifyConfig.clientId}
+                onChange={(e) => setShopifyConfig((c) => ({ ...c, clientId: e.target.value }))}
+                placeholder="From Dev Dashboard → Settings"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Client secret</label>
+              <input
+                type="password"
+                value={shopifyConfig.clientSecret}
+                onChange={(e) => setShopifyConfig((c) => ({ ...c, clientSecret: e.target.value }))}
+                placeholder="From Dev Dashboard → Settings"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">API version</label>
+              <input
+                type="text"
+                value={shopifyConfig.apiVersion}
+                onChange={(e) => setShopifyConfig((c) => ({ ...c, apiVersion: e.target.value }))}
+                placeholder="2024-10"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+            </div>
+            <button
+              onClick={handleSaveShopify}
+              disabled={shopifySaving}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+            >
+              {shopifySaved ? '✓ Saved' : shopifySaving ? 'Saving…' : 'Save Shopify settings'}
+            </button>
           </div>
         </div>
 

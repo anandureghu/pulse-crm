@@ -1,0 +1,573 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import { toast } from '../components/Toast'
+
+interface CachedVariant {
+  variantId: number
+  productId: number
+  title: string
+  variantTitle: string
+  sku: string
+  price: string
+  currency: string
+}
+
+interface ShopifyProductsCache {
+  byPrice: Record<string, CachedVariant[]>
+  syncedAt: string | null
+  rawCount: number
+}
+
+interface OrderCustomerDto {
+  firstName: string
+  lastName: string
+  phone: string
+  email?: string | null
+  address1: string
+  address2?: string | null
+  city: string
+  province?: string | null
+  zip: string
+  country: string
+}
+
+interface OrderDto {
+  customer: OrderCustomerDto
+  amount: number
+  quantity: number
+  tags: string[]
+  note?: string | null
+  financialStatus?: 'pending' | 'paid'
+  shippingLines?: { title: string; price: string }[] | null
+}
+
+interface ShopifyOrderRow {
+  id: string
+  shopify_order_id: string | null
+  shopify_order_name: string | null
+  phone: string | null
+  email: string | null
+  amount: number | null
+  tags: string[] | null
+  status: string
+  error: string | null
+  created_at: string
+}
+
+type Tab = 'create' | 'products' | 'orders'
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'create', label: 'Create order' },
+  { id: 'products', label: 'Products' },
+  { id: 'orders', label: 'Orders' },
+]
+
+function priceKey(amount: number): string {
+  return Number(amount).toFixed(2)
+}
+
+async function invokeFunction<T>(name: string, body: unknown): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession()
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session?.access_token}`,
+    },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`)
+  return data as T
+}
+
+export default function Orders() {
+  const [tab, setTab] = useState<Tab>('create')
+  const [prompt, setPrompt] = useState('')
+  const [dto, setDto] = useState<OrderDto | null>(null)
+  const [cache, setCache] = useState<ShopifyProductsCache | null>(null)
+  const [selectedVariantId, setSelectedVariantId] = useState<number | null>(null)
+  const [parsing, setParsing] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [recent, setRecent] = useState<ShopifyOrderRow[]>([])
+  const [tagsInput, setTagsInput] = useState('')
+  const [productSearch, setProductSearch] = useState('')
+
+  const loadCache = useCallback(async () => {
+    const { data } = await supabase.from('settings').select('value').eq('key', 'shopify_products').maybeSingle()
+    if (data?.value) setCache(data.value as unknown as ShopifyProductsCache)
+  }, [])
+
+  const loadRecent = useCallback(async () => {
+    const { data } = await supabase
+      .from('shopify_orders')
+      .select('id, shopify_order_id, shopify_order_name, phone, email, amount, tags, status, error, created_at')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setRecent((data as ShopifyOrderRow[]) ?? [])
+  }, [])
+
+  useEffect(() => {
+    loadCache()
+    loadRecent()
+  }, [loadCache, loadRecent])
+
+  const allProducts = useMemo(() => {
+    if (!cache?.byPrice) return []
+    const map = new Map<number, CachedVariant>()
+    for (const variants of Object.values(cache.byPrice)) {
+      for (const v of variants) map.set(v.variantId, v)
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.title.localeCompare(b.title) || Number(a.price) - Number(b.price),
+    )
+  }, [cache])
+
+  const filteredProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase()
+    if (!q) return allProducts
+    return allProducts.filter((p) =>
+      p.title.toLowerCase().includes(q)
+      || p.variantTitle.toLowerCase().includes(q)
+      || p.sku.toLowerCase().includes(q)
+      || p.price.includes(q),
+    )
+  }, [allProducts, productSearch])
+
+  const matches = useMemo(() => {
+    if (!dto || !cache?.byPrice) return []
+    return cache.byPrice[priceKey(dto.amount)] ?? []
+  }, [dto, cache])
+
+  useEffect(() => {
+    if (matches.length === 1) {
+      setSelectedVariantId(matches[0].variantId)
+    } else if (matches.length === 0) {
+      setSelectedVariantId(null)
+    } else {
+      setSelectedVariantId((prev) =>
+        prev && matches.some((m) => m.variantId === prev) ? prev : null,
+      )
+    }
+  }, [matches])
+
+  const handleSync = async () => {
+    setSyncing(true)
+    try {
+      const res = await invokeFunction<{ rawCount: number; priceBuckets: number; syncedAt: string }>(
+        'sync-shopify-products',
+        {},
+      )
+      await loadCache()
+      toast(`Synced ${res.rawCount} variants (${res.priceBuckets} price buckets)`, 'success')
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const handleParse = async () => {
+    if (!prompt.trim()) {
+      toast('Paste an order prompt first', 'error')
+      return
+    }
+    setParsing(true)
+    try {
+      const res = await invokeFunction<{ dto: OrderDto }>('parse-order-prompt', { prompt })
+      setDto(res.dto)
+      setTagsInput((res.dto.tags ?? []).join(', '))
+      toast('Prompt parsed — review details before creating', 'success')
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  const updateCustomer = <K extends keyof OrderCustomerDto>(key: K, value: OrderCustomerDto[K]) => {
+    setDto((d) => (d ? { ...d, customer: { ...d.customer, [key]: value } } : d))
+  }
+
+  const handleCreate = async () => {
+    if (!dto) {
+      toast('Parse a prompt first', 'error')
+      return
+    }
+    if (!selectedVariantId) {
+      toast(matches.length === 0
+        ? 'No product at this price — sync products or fix amount'
+        : 'Select a product variant', 'error')
+      return
+    }
+    const tags = tagsInput
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+    // Prefer tags from the editable field; fall back to parsed dto tags
+    const mergedTags = tags.length > 0 ? tags : (dto.tags ?? []).map((t) => String(t).trim()).filter(Boolean)
+    const payload: OrderDto = { ...dto, tags: mergedTags }
+
+    setCreating(true)
+    try {
+      const res = await invokeFunction<{
+        orderName: string
+        adminUrl: string
+      }>('create-shopify-order', {
+        dto: payload,
+        variantId: selectedVariantId,
+        prompt,
+      })
+      toast(`Order ${res.orderName} created`, 'success')
+      setPrompt('')
+      setDto(null)
+      setTagsInput('')
+      setSelectedVariantId(null)
+      await loadRecent()
+      setTab('orders')
+      if (res.adminUrl) window.open(res.adminUrl, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      toast((e as Error).message, 'error')
+      await loadRecent()
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="p-6 max-w-5xl">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-800">Orders</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Create Shopify orders from a prompt, browse synced products, and review order history.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-gray-400 text-right">
+            {cache?.syncedAt
+              ? <>Last sync: {new Date(cache.syncedAt).toLocaleString()} · {cache.rawCount} variants</>
+              : 'Products not synced yet'}
+          </div>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+          >
+            {syncing ? 'Syncing…' : 'Sync products'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-1 border-b border-gray-200 mb-5">
+        {TABS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === id
+                ? 'border-green-600 text-green-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {label}
+            {id === 'products' && allProducts.length > 0 && (
+              <span className="ml-1.5 text-xs text-gray-400">({allProducts.length})</span>
+            )}
+            {id === 'orders' && recent.length > 0 && (
+              <span className="ml-1.5 text-xs text-gray-400">({recent.length})</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'create' && (
+        <>
+          <div className="bg-white rounded-xl border border-gray-200 p-5 mb-5 space-y-4">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Order prompt</label>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={8}
+                placeholder={`Sandhu U\nKottur house\nKunnamangalam po 673571\nNear IIM\nCalicut\n9400877821\namount 1999\nCOD`}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
+              />
+            </div>
+            <button
+              onClick={handleParse}
+              disabled={parsing}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+            >
+              {parsing ? 'Parsing…' : 'Parse with AI'}
+            </button>
+          </div>
+
+          {dto && (
+            <div className="bg-white rounded-xl border border-gray-200 p-5 mb-5 space-y-4">
+              <h3 className="font-semibold text-gray-700">Review order</h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="First name" value={dto.customer.firstName} onChange={(v) => updateCustomer('firstName', v)} />
+                <Field label="Last name" value={dto.customer.lastName} onChange={(v) => updateCustomer('lastName', v)} />
+                <Field label="Phone" value={dto.customer.phone} onChange={(v) => updateCustomer('phone', v)} />
+                <Field label="Email" value={dto.customer.email ?? ''} onChange={(v) => updateCustomer('email', v)} />
+                <Field label="Address 1" value={dto.customer.address1} onChange={(v) => updateCustomer('address1', v)} className="sm:col-span-2" />
+                <Field label="Address 2" value={dto.customer.address2 ?? ''} onChange={(v) => updateCustomer('address2', v)} className="sm:col-span-2" />
+                <Field label="City" value={dto.customer.city} onChange={(v) => updateCustomer('city', v)} />
+                <Field label="Province / state" value={dto.customer.province ?? ''} onChange={(v) => updateCustomer('province', v)} />
+                <Field label="PIN / zip" value={dto.customer.zip} onChange={(v) => updateCustomer('zip', v)} />
+                <Field label="Country" value={dto.customer.country} onChange={(v) => updateCustomer('country', v)} />
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Amount</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={dto.amount}
+                    onChange={(e) => setDto({ ...dto, amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={dto.quantity}
+                    onChange={(e) => setDto({ ...dto, quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm text-gray-600 mb-1">Tags (comma-separated)</label>
+                  <input
+                    type="text"
+                    value={tagsInput}
+                    onChange={(e) => setTagsInput(e.target.value)}
+                    placeholder="COD"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm text-gray-600 mb-1">Note</label>
+                  <input
+                    type="text"
+                    value={dto.note ?? ''}
+                    onChange={(e) => setDto({ ...dto, note: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Payment</label>
+                  <select
+                    value={dto.financialStatus ?? 'pending'}
+                    onChange={(e) => setDto({ ...dto, financialStatus: e.target.value as 'pending' | 'paid' })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  >
+                    <option value="pending">Pending (COD)</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">
+                  Product at ₹{priceKey(dto.amount)}
+                </h4>
+                {matches.length === 0 && (
+                  <p className="text-sm text-red-500">
+                    No product at this price — sync products or check the amount.
+                  </p>
+                )}
+                {matches.length === 1 && (
+                  <p className="text-sm text-gray-600">
+                    Auto-selected: <span className="font-medium">{matches[0].title}</span>
+                    {matches[0].variantTitle && matches[0].variantTitle !== 'Default Title'
+                      ? ` — ${matches[0].variantTitle}`
+                      : ''}
+                    {matches[0].sku ? ` · SKU ${matches[0].sku}` : ''}
+                  </p>
+                )}
+                {matches.length > 1 && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-amber-600 mb-2">
+                      Multiple products match this price — pick one:
+                    </p>
+                    {matches.map((m) => (
+                      <label
+                        key={m.variantId}
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${
+                          selectedVariantId === m.variantId
+                            ? 'border-green-500 bg-green-50'
+                            : 'border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="variant"
+                          checked={selectedVariantId === m.variantId}
+                          onChange={() => setSelectedVariantId(m.variantId)}
+                          className="mt-1"
+                        />
+                        <div className="text-sm">
+                          <div className="font-medium text-gray-800">{m.title}</div>
+                          <div className="text-gray-500">
+                            {m.variantTitle !== 'Default Title' ? m.variantTitle : 'Default'}
+                            {m.sku ? ` · ${m.sku}` : ''} · ₹{m.price}
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={handleCreate}
+                disabled={creating || !selectedVariantId}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+              >
+                {creating ? 'Creating…' : 'Create Shopify order'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === 'products' && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h3 className="font-semibold text-gray-700">Synced products</h3>
+            <input
+              type="search"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="Search title, SKU, price…"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
+          </div>
+          {allProducts.length === 0 ? (
+            <p className="text-sm text-gray-400">
+              No products cached yet. Click <span className="font-medium text-gray-600">Sync products</span> to pull from Shopify.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-500 border-b border-gray-100">
+                    <th className="py-2 pr-3 font-medium">Product</th>
+                    <th className="py-2 pr-3 font-medium">Variant</th>
+                    <th className="py-2 pr-3 font-medium">SKU</th>
+                    <th className="py-2 pr-3 font-medium">Price</th>
+                    <th className="py-2 font-medium">Variant ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredProducts.map((p) => (
+                    <tr key={p.variantId} className="border-b border-gray-50">
+                      <td className="py-2 pr-3 text-gray-800 font-medium">{p.title}</td>
+                      <td className="py-2 pr-3 text-gray-600">
+                        {p.variantTitle !== 'Default Title' ? p.variantTitle : 'Default'}
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-gray-500">{p.sku || '—'}</td>
+                      <td className="py-2 pr-3 text-gray-700">₹{p.price}</td>
+                      <td className="py-2 font-mono text-xs text-gray-400">{p.variantId}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filteredProducts.length === 0 && (
+                <p className="text-sm text-gray-400 mt-3">No products match “{productSearch}”.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'orders' && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-gray-700">Order history</h3>
+            <button
+              type="button"
+              onClick={() => loadRecent()}
+              className="text-sm text-green-600 hover:text-green-700"
+            >
+              Refresh
+            </button>
+          </div>
+          {recent.length === 0 ? (
+            <p className="text-sm text-gray-400">No orders created yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-500 border-b border-gray-100">
+                    <th className="py-2 pr-3 font-medium">Order</th>
+                    <th className="py-2 pr-3 font-medium">Phone</th>
+                    <th className="py-2 pr-3 font-medium">Email</th>
+                    <th className="py-2 pr-3 font-medium">Amount</th>
+                    <th className="py-2 pr-3 font-medium">Tags</th>
+                    <th className="py-2 pr-3 font-medium">Status</th>
+                    <th className="py-2 font-medium">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.map((row) => (
+                    <tr key={row.id} className="border-b border-gray-50">
+                      <td className="py-2 pr-3 font-mono text-gray-800">
+                        {row.shopify_order_name ?? '—'}
+                      </td>
+                      <td className="py-2 pr-3 text-gray-600">{row.phone ?? '—'}</td>
+                      <td className="py-2 pr-3 text-gray-500">{row.email ?? '—'}</td>
+                      <td className="py-2 pr-3 text-gray-600">
+                        {row.amount != null ? `₹${Number(row.amount).toFixed(2)}` : '—'}
+                      </td>
+                      <td className="py-2 pr-3 text-gray-500">
+                        {(row.tags ?? []).join(', ') || '—'}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span className={row.status === 'created' ? 'text-green-600' : 'text-red-500'} title={row.error ?? ''}>
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="py-2 text-gray-400 whitespace-nowrap">
+                        {new Date(row.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  className = '',
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  className?: string
+}) {
+  return (
+    <div className={className}>
+      <label className="block text-sm text-gray-600 mb-1">{label}</label>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+      />
+    </div>
+  )
+}

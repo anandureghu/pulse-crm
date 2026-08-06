@@ -72,6 +72,9 @@ supabase secrets set \
 supabase functions deploy
 ```
 
+New Shopify Order Area functions (after configuring Shopify in Settings):
+`sync-shopify-products`, `parse-order-prompt`, `create-shopify-order`.
+
 ### 6. Evolution API webhook
 
 In your Evolution API dashboard, set the webhook URL to:
@@ -81,12 +84,23 @@ https://<project-ref>.supabase.co/functions/v1/evolution-webhook
 
 Enable events: `messages.upsert`, `messages.update`
 
-### 7. Daily follow-up reminders (optional)
+### 7. Shopify Order Area (optional)
+
+1. Create/install an app in **Shopify Dev Dashboard**, scopes:
+   `read_products`, `read_customers`, `write_customers`, `write_orders`
+2. In **Settings → Shopify**, set:
+   - Shop domain (`your-store.myshopify.com`)
+   - **Client ID** + **Client secret** (Dev Dashboard → Settings)
+3. Ensure **Settings → AI Assistant** has an OpenAI API key (used to parse order prompts)
+4. Open **Orders** → **Sync products** → paste prompt → **Parse with AI** → create order
+
+Edge functions exchange client credentials for a short-lived Admin API token automatically.
+### 8. Daily follow-up reminders (optional)
 
 Enable `pg_cron` and add a scheduled job — see the comment at the top of
 `supabase/functions/daily-followup-reminder/index.ts` for the SQL snippet.
 
-### 8. Create first admin user
+### 9. Create first admin user
 
 1. Create a user via Supabase Auth (Dashboard → Authentication → Users → Add user)
 2. In the SQL editor, run:
@@ -118,7 +132,8 @@ supabase functions serve
 | Follow-ups | `/followups` | Overdue, today, upcoming follow-ups |
 | Calendar | `/calendar` | Monthly calendar view |
 | Analytics | `/analytics` | Pipeline funnel, conversion rate, revenue |
-| Settings | `/settings` | Evolution API config, WhatsApp QR connection |
+| Orders | `/orders` | Paste prompt → AI parse → Shopify order |
+| Settings | `/settings` | Evolution, Shopify, AI config |
 
 ## Sales Pipeline Stages
 
@@ -130,4 +145,4 @@ Lost branch: Not Interested / Lost / Spam / Duplicate
 ## Database Tables
 
 `users` · `customers` · `enquiries` · `conversations` · `messages` ·
-`notes` · `activities` · `followups` · `tags` · `settings`
+`notes` · `activities` · `followups` · `tags` · `settings` · `shopify_orders`
