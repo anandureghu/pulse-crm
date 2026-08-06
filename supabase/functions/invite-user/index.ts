@@ -43,7 +43,11 @@ Deno.serve(async (req) => {
   const { data: existing } = await admin.from('users').select('id').eq('email', email).maybeSingle()
   if (existing) return fail('A user with this email already exists', 409)
 
-  const { data, error } = await admin.auth.admin.inviteUserByEmail(email)
+  const redirectTo = Deno.env.get('APP_URL') ?? 'https://pulse.picominds.com'
+
+  const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+    redirectTo,
+  })
   if (error) return fail(error.message, 400)
 
   await admin.from('users').update({ role }).eq('id', data.user.id)
