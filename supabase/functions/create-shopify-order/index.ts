@@ -103,6 +103,18 @@ Deno.serve(async (req) => {
 
     if (!shopifyCustomerId) {
       const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
+      const addressBlock = {
+        address1: dto.customer.address1,
+        address2: dto.customer.address2 || undefined,
+        city: dto.customer.city,
+        province: dto.customer.province || undefined,
+        zip: dto.customer.zip,
+        country: dto.customer.country || 'IN',
+        phone: phoneE164,
+        first_name: dto.customer.firstName || 'Customer',
+        last_name: dto.customer.lastName || '',
+        default: true,
+      }
       const { data: created } = await shopifyFetch<{ customer: { id: number } }>(cfg, '/customers.json', {
         method: 'POST',
         body: JSON.stringify({
@@ -112,24 +124,43 @@ Deno.serve(async (req) => {
             email: dto.customer.email || undefined,
             phone: phoneE164,
             verified_email: false,
-            addresses: [
-              {
-                address1: dto.customer.address1,
-                address2: dto.customer.address2 || undefined,
-                city: dto.customer.city,
-                province: dto.customer.province || undefined,
-                zip: dto.customer.zip,
-                country: dto.customer.country || 'IN',
-                phone: phoneE164,
-                first_name: dto.customer.firstName || 'Customer',
-                last_name: dto.customer.lastName || '',
-                default: true,
-              },
-            ],
+            addresses: [addressBlock],
           },
         }),
       })
       shopifyCustomerId = String(created.customer.id)
+    } else {
+      // Keep Shopify customer shipping + billing address in sync with the order DTO
+      const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
+      try {
+        await shopifyFetch(cfg, `/customers/${shopifyCustomerId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            customer: {
+              id: Number(shopifyCustomerId),
+              first_name: dto.customer.firstName || undefined,
+              last_name: dto.customer.lastName || undefined,
+              email: dto.customer.email || undefined,
+              addresses: [
+                {
+                  address1: dto.customer.address1,
+                  address2: dto.customer.address2 || undefined,
+                  city: dto.customer.city,
+                  province: dto.customer.province || undefined,
+                  zip: dto.customer.zip,
+                  country: dto.customer.country || 'IN',
+                  phone: phoneE164,
+                  first_name: dto.customer.firstName || 'Customer',
+                  last_name: dto.customer.lastName || '',
+                  default: true,
+                },
+              ],
+            },
+          }),
+        })
+      } catch (e) {
+        console.error('Failed to update Shopify customer address:', e)
+      }
     }
 
     const tags = (Array.isArray(dto.tags) ? dto.tags : [])
@@ -138,7 +169,8 @@ Deno.serve(async (req) => {
     const tagsStr = tags.join(', ')
     const isCod = tags.some((t) => t.toUpperCase() === 'COD') || dto.financialStatus === 'pending'
 
-    const shippingAddress = {
+    const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
+    const addressFields = {
       first_name: dto.customer.firstName || 'Customer',
       last_name: dto.customer.lastName || '',
       address1: dto.customer.address1,
@@ -147,8 +179,11 @@ Deno.serve(async (req) => {
       province: dto.customer.province || undefined,
       zip: dto.customer.zip,
       country: dto.customer.country || 'IN',
-      phone: phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`,
+      phone: phoneE164,
     }
+    // Explicit separate objects so Shopify always receives both shipping + billing
+    const shippingAddress = { ...addressFields }
+    const billingAddress = { ...addressFields }
 
     const order: Record<string, unknown> = {
       line_items: selected.map((l) => ({
@@ -157,7 +192,7 @@ Deno.serve(async (req) => {
       })),
       customer: { id: Number(shopifyCustomerId) },
       shipping_address: shippingAddress,
-      billing_address: shippingAddress,
+      billing_address: billingAddress,
       financial_status: isCod ? 'pending' : (dto.financialStatus || 'paid'),
       send_receipt: false,
       send_fulfillment_receipt: false,
@@ -200,6 +235,7 @@ Deno.serve(async (req) => {
       shopify_order_id: shopifyOrderId,
       shopify_order_name: shopifyOrderName,
       shopify_customer_id: shopifyCustomerId,
+      customer_name: [dto.customer.firstName, dto.customer.lastName].filter(Boolean).join(' ').trim() || null,
       phone: phoneDigits,
       email: dto.customer.email || null,
       amount: dto.amount,
@@ -226,6 +262,7 @@ Deno.serve(async (req) => {
       shopify_order_id: shopifyOrderId,
       shopify_order_name: shopifyOrderName,
       shopify_customer_id: shopifyCustomerId,
+      customer_name: [dto.customer.firstName, dto.customer.lastName].filter(Boolean).join(' ').trim() || null,
       phone: phoneDigits,
       email: dto.customer.email || null,
       amount: dto.amount,

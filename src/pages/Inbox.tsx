@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useConversations, useMessages } from '../hooks/useConversations'
 import { useCustomers } from '../hooks/useCustomers'
-import { sendMessageFn } from '../lib/functions'
-import { starMessage, clearConversationMessages } from '../lib/db'
+import { useUsers } from '../hooks/useUsers'
+import { useAuthStore } from '../store/authStore'
+import { sendMessageFn, assignEnquiryFn } from '../lib/functions'
+import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
+import { formatPhoneDisplay, telHref } from '../lib/phone'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
 import type { Conversation, Message } from '../types'
@@ -23,6 +27,10 @@ function smartTimestamp(iso: string): string {
 export default function Inbox() {
   const { conversations, loading } = useConversations()
   const { customers } = useCustomers()
+  const users = useUsers()
+  const authUser = useAuthStore((s) => s.user)
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [selected, setSelected] = useState<string | null>(null)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -32,12 +40,23 @@ export default function Inbox() {
   const [clearing, setClearing] = useState(false)
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const [assigning, setAssigning] = useState(false)
+  const actionsRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const messages = useMessages(selected)
   const conv = conversations.find((c) => c.id === selected)
+  const selectedCustomer = conv
+    ? customers.find((c) => c.id === conv.customerId)
+    : undefined
 
-  // Purge optimistic messages that now exist in the real data
+  const meLabel = (() => {
+    const row = users.find((u) => u.id === authUser?.id)
+    if (row) return userLabel(row)
+    return authUser?.email ?? ''
+  })()
+
   useEffect(() => {
     if (optimistic.length === 0) return
     setOptimistic((prev) =>
@@ -53,12 +72,20 @@ export default function Inbox() {
     )
   }, [messages]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset AI suggestion when switching conversations
   useEffect(() => {
     setAiSuggestion(null)
+    setActionsOpen(false)
   }, [selected])
 
-  // Clear unread count — depends on both selected and conversations
+  // Deep-link from "Add customer" → open that conversation
+  useEffect(() => {
+    const c = searchParams.get('c')
+    if (!c) return
+    setSelected(c)
+    searchParams.delete('c')
+    setSearchParams(searchParams, { replace: true })
+  }, [searchParams, setSearchParams])
+
   useEffect(() => {
     if (!selected) return
     const c = conversations.find((cv) => cv.id === selected)
@@ -67,14 +94,28 @@ export default function Inbox() {
     }
   }, [selected, conversations])
 
+  useEffect(() => {
+    if (!actionsOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
+        setActionsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [actionsOpen])
+
   const customerName = (c: Conversation) =>
     customers.find((cu) => cu.id === c.customerId)?.name ?? c.customerId
 
-  const filtered = conversations.filter((c) =>
-    search ? customerName(c).toLowerCase().includes(search.toLowerCase()) : true
-  )
+  const filtered = conversations.filter((c) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    const name = customerName(c).toLowerCase()
+    const phone = customers.find((cu) => cu.id === c.customerId)?.phone ?? ''
+    return name.includes(q) || phone.includes(q)
+  })
 
-  // Combined and sorted message list (real + optimistic)
   const allMessages = [
     ...messages,
     ...optimistic.filter((o) => {
@@ -145,6 +186,51 @@ export default function Inbox() {
     }
   }
 
+  const handleAssignToMe = async () => {
+    if (!selectedCustomer || !meLabel) return
+    setAssigning(true)
+    setActionsOpen(false)
+    try {
+      await supabase
+        .from('customers')
+        .update({ assigned_to: meLabel })
+        .eq('id', selectedCustomer.id)
+
+      const { data: enq } = await supabase
+        .from('enquiries')
+        .select('id')
+        .eq('customer_id', selectedCustomer.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (enq?.id) {
+        await assignEnquiryFn({
+          enquiryId: enq.id,
+          assignTo: meLabel,
+          customerId: selectedCustomer.id,
+        })
+      }
+      toast(`Assigned to ${meLabel}`, 'success')
+    } catch {
+      toast('Failed to assign', 'error')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  const copyPhone = async () => {
+    if (!selectedCustomer?.phone) return
+    const display = formatPhoneDisplay(selectedCustomer.phone)
+    try {
+      await navigator.clipboard.writeText(display)
+      toast('Phone copied', 'success')
+    } catch {
+      toast('Could not copy', 'error')
+    }
+    setActionsOpen(false)
+  }
+
   const starredCount = allMessages.filter((m) => m.starred).length
   const unstarredCount = allMessages.filter((m) => !m.starred && !m.id.startsWith('tmp-')).length
 
@@ -175,9 +261,10 @@ export default function Inbox() {
     }
   }
 
+  const phoneDisplay = selectedCustomer ? formatPhoneDisplay(selectedCustomer.phone) : ''
+
   return (
     <div className="flex h-full min-h-0 min-w-0">
-      {/* Sidebar — full screen on mobile when no conv selected, hidden when chat is open */}
       <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0 min-h-0`}>
         <div className="p-4 border-b border-gray-200 space-y-2">
           <h2 className="font-semibold text-gray-800">Inbox</h2>
@@ -225,7 +312,6 @@ export default function Inbox() {
         </div>
       </div>
 
-      {/* Chat pane — full screen on mobile when conv selected, hidden otherwise */}
       <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-gray-50 min-w-0 min-h-0`}>
         {conv ? (
           <>
@@ -244,22 +330,80 @@ export default function Inbox() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
-                <p className="text-xs text-gray-500">
-                  {customers.find((c) => c.id === conv.customerId)?.phone}
-                </p>
+                <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <span className="truncate">{phoneDisplay || '—'}</span>
+                  {phoneDisplay && (
+                    <button
+                      type="button"
+                      onClick={copyPhone}
+                      className="text-gray-400 hover:text-gray-700 flex-shrink-0"
+                      title="Copy number"
+                    >
+                      ⎘
+                    </button>
+                  )}
+                </div>
               </div>
-              {unstarredCount > 0 && (
+
+              <div className="relative flex-shrink-0" ref={actionsRef}>
                 <button
-                  onClick={() => setClearConfirm(true)}
-                  title="Clear messages"
-                  className="text-xs text-gray-400 hover:text-red-500 flex-shrink-0 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                  type="button"
+                  onClick={() => setActionsOpen((o) => !o)}
+                  className="text-xs font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 px-2.5 py-1.5 rounded-lg"
                 >
-                  🗑 Clear
+                  Actions ▾
                 </button>
-              )}
+                {actionsOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-20 py-1 text-sm">
+                    <button
+                      type="button"
+                      disabled={assigning || !meLabel}
+                      onClick={handleAssignToMe}
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700 disabled:opacity-40"
+                    >
+                      {assigning ? 'Assigning…' : 'Assign to me'}
+                    </button>
+                    {selectedCustomer && (
+                      <Link
+                        to={`/customers/${selectedCustomer.id}`}
+                        className="block px-3 py-2 hover:bg-gray-50 text-gray-700"
+                        onClick={() => setActionsOpen(false)}
+                      >
+                        Customer details
+                      </Link>
+                    )}
+                    {phoneDisplay && (
+                      <a
+                        href={telHref(selectedCustomer?.phone)}
+                        className="block px-3 py-2 hover:bg-gray-50 text-gray-700"
+                        onClick={() => setActionsOpen(false)}
+                      >
+                        Call {phoneDisplay}
+                      </a>
+                    )}
+                    {phoneDisplay && (
+                      <button
+                        type="button"
+                        onClick={copyPhone}
+                        className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700"
+                      >
+                        Copy number
+                      </button>
+                    )}
+                    {unstarredCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => { setClearConfirm(true); setActionsOpen(false) }}
+                        className="w-full text-left px-3 py-2 hover:bg-red-50 text-red-600"
+                      >
+                        Clear messages
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Clear confirmation dialog */}
             {clearConfirm && (
               <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
@@ -296,14 +440,13 @@ export default function Inbox() {
                 <MessageBubble
                   key={msg.id}
                   msg={msg}
-                  customerPhone={customers.find((c) => c.id === conv.customerId)?.phone}
+                  customerPhone={selectedCustomer?.phone}
                   onStar={msg.id.startsWith('tmp-') ? undefined : handleStar}
                 />
               ))}
               <div ref={messagesEndRef} />
             </div>
 
-            {/* AI suggestion card */}
             {aiSuggestion && (
               <div className="mx-3 mb-2 bg-purple-50 border border-purple-200 rounded-xl p-3">
                 <div className="flex items-center justify-between mb-1.5">
@@ -374,6 +517,13 @@ export default function Inbox() {
           <div className="flex-1 flex items-center justify-center text-gray-400 flex-col gap-2">
             <div className="text-4xl">💬</div>
             <p className="text-sm">Select a conversation to start chatting</p>
+            <button
+              type="button"
+              onClick={() => navigate('/customers')}
+              className="text-sm text-green-600 hover:text-green-700 mt-2"
+            >
+              Add a customer to start a chat
+            </button>
           </div>
         )}
       </div>

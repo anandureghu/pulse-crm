@@ -3,7 +3,13 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
 import { toast } from '../components/Toast'
 
-type TeamMember = { id: string; email: string; role: 'admin' | 'sales'; phone: string | null }
+type TeamMember = {
+  id: string
+  email: string
+  username: string | null
+  role: 'admin' | 'sales'
+  phone: string | null
+}
 
 export default function Team() {
   const { user } = useAuthStore()
@@ -15,12 +21,15 @@ export default function Team() {
   const [inviteRole, setInviteRole] = useState<'sales' | 'admin'>('sales')
   const [editingPhone, setEditingPhone] = useState<string | null>(null)
   const [phoneInput, setPhoneInput] = useState('')
+  const [editingUsername, setEditingUsername] = useState<string | null>(null)
+  const [usernameInput, setUsernameInput] = useState('')
   const [inviting, setInviting] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
+  const [memberSearch, setMemberSearch] = useState('')
 
   const load = async () => {
     setLoading(true)
-    const { data } = await supabase.from('users').select('id, email, role, phone').order('email')
+    const { data } = await supabase.from('users').select('id, email, username, role, phone').order('email')
     setMembers((data ?? []) as TeamMember[])
     setLoading(false)
   }
@@ -76,6 +85,15 @@ export default function Team() {
     setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, phone } : m)))
     setEditingPhone(null)
     toast('Phone saved', 'success')
+  }
+
+  const handleUsernameSave = async (memberId: string) => {
+    const username = usernameInput.trim() || null
+    const { error } = await supabase.from('users').update({ username }).eq('id', memberId)
+    if (error) { toast('Failed to save username', 'error'); return }
+    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, username } : m)))
+    setEditingUsername(null)
+    toast('Username saved', 'success')
   }
 
   const handleRemove = async (memberId: string, email: string) => {
@@ -184,15 +202,24 @@ export default function Team() {
       )}
 
       {/* Members table */}
+      <div className="mb-4">
+        <input
+          value={memberSearch}
+          onChange={(e) => setMemberSearch(e.target.value)}
+          placeholder="Search by username or email…"
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full max-w-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+        />
+      </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         {loading ? (
           <p className="text-sm text-gray-400 p-6">Loading…</p>
         ) : members.length === 0 ? (
           <p className="text-sm text-gray-400 p-6">No team members yet.</p>
         ) : (
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Username</th>
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Email</th>
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">WhatsApp</th>
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Role</th>
@@ -200,8 +227,46 @@ export default function Team() {
               </tr>
             </thead>
             <tbody>
-              {members.map((m) => (
+              {members
+                .filter((m) => {
+                  const q = memberSearch.trim().toLowerCase()
+                  if (!q) return true
+                  return (
+                    m.email.toLowerCase().includes(q)
+                    || (m.username ?? '').toLowerCase().includes(q)
+                  )
+                })
+                .map((m) => (
                 <tr key={m.id} className="border-b border-gray-100 last:border-0">
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {editingUsername === m.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          value={usernameInput}
+                          onChange={(e) => setUsernameInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleUsernameSave(m.id)
+                            if (e.key === 'Escape') setEditingUsername(null)
+                          }}
+                          autoFocus
+                          className="border border-gray-300 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                        <button onClick={() => handleUsernameSave(m.id)} className="text-xs text-green-600 font-medium">Save</button>
+                        <button onClick={() => setEditingUsername(null)} className="text-xs text-gray-400">✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingUsername(m.id)
+                          setUsernameInput(m.username ?? m.email.split('@')[0] ?? '')
+                        }}
+                        className="text-gray-800 hover:text-green-700 text-left"
+                      >
+                        {m.username || <span className="text-gray-300">+ Set username</span>}
+                      </button>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-800 whitespace-nowrap">
                     {m.email}
                     {m.id === user?.id && (

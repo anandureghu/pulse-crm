@@ -105,7 +105,11 @@ export default function CustomerDetail() {
   const handleAssign = async (assignTo: string) => {
     if (!latestEnquiry || !assignTo) return
     try {
-      await assignEnquiryFn({ enquiryId: latestEnquiry.id, assignTo })
+      await assignEnquiryFn({
+        enquiryId: latestEnquiry.id,
+        assignTo,
+        customerId: customer?.id,
+      })
       toast('Assigned successfully', 'success')
     } catch {
       toast('Failed to assign', 'error')
@@ -155,7 +159,9 @@ export default function CustomerDetail() {
                 <button onClick={() => setEditingName(true)} className="text-gray-400 hover:text-gray-600 text-xs flex-shrink-0">✏️</button>
               </div>
             )}
-            <p className="text-xs text-gray-500">{customer.phone}</p>
+            <p className="text-xs text-gray-500">
+              {customer.phone.startsWith('+') ? customer.phone : `+${customer.phone}`}
+            </p>
           </div>
         </div>
 
@@ -313,6 +319,7 @@ function ProfileTab({
   onAssign: (to: string) => void
 }) {
   const [assignTo, setAssignTo] = useState(latestEnquiry?.assignedTo ?? '')
+  const [assignSearch, setAssignSearch] = useState('')
   const [aiAutoreply, setAiAutoreply] = useState(customer.aiAutoreply ?? false)
 
   const toggleAiAutoreply = async () => {
@@ -326,6 +333,18 @@ function ProfileTab({
     setAssignTo(latestEnquiry?.assignedTo ?? '')
   }, [latestEnquiry?.assignedTo])
 
+  const filteredUsers = users.filter((u) => {
+    const q = assignSearch.trim().toLowerCase()
+    if (!q) return true
+    return (
+      u.email.toLowerCase().includes(q)
+      || (u.username ?? '').toLowerCase().includes(q)
+    )
+  })
+
+  const labelFor = (u: { username: string | null; email: string }) =>
+    u.username?.trim() || u.email
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 max-w-2xl">
       <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -333,7 +352,9 @@ function ProfileTab({
         <dl className="space-y-2 text-sm">
           <div className="flex justify-between">
             <dt className="text-gray-500">Phone</dt>
-            <dd className="text-gray-800 font-medium">{customer.phone}</dd>
+            <dd className="text-gray-800 font-medium">
+              {customer.phone.startsWith('+') ? customer.phone : `+${customer.phone}`}
+            </dd>
           </div>
           <div className="flex justify-between">
             <dt className="text-gray-500">Customer since</dt>
@@ -378,24 +399,35 @@ function ProfileTab({
               <dt className="text-gray-500">Value</dt>
               <dd className="text-gray-800">₹{(latestEnquiry.value ?? 0).toLocaleString('en-IN')}</dd>
             </div>
-            <div className="flex gap-2 mt-3">
-              <select
-                value={assignTo}
-                onChange={(e) => setAssignTo(e.target.value)}
-                className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
-              >
-                <option value="">Unassigned</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.email}>{u.email}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => onAssign(assignTo)}
-                disabled={!assignTo}
-                className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-green-700 disabled:opacity-40"
-              >
-                Assign
-              </button>
+            <div className="mt-3 space-y-2">
+              <input
+                type="search"
+                value={assignSearch}
+                onChange={(e) => setAssignSearch(e.target.value)}
+                placeholder="Search by username or email…"
+                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              <div className="flex gap-2">
+                <select
+                  value={assignTo}
+                  onChange={(e) => setAssignTo(e.target.value)}
+                  className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">Unassigned</option>
+                  {filteredUsers.map((u) => (
+                    <option key={u.id} value={labelFor(u)}>
+                      {labelFor(u)}{u.username ? ` · ${u.email}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => onAssign(assignTo)}
+                  disabled={!assignTo}
+                  className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-green-700 disabled:opacity-40"
+                >
+                  Assign
+                </button>
+              </div>
             </div>
           </dl>
         </div>

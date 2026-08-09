@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { useConversations } from '../hooks/useConversations'
 import { supabase } from '../lib/supabase'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊', adminOnly: false },
-  { to: '/inbox', label: 'Inbox', icon: '💬', adminOnly: false },
+  { to: '/inbox', label: 'Inbox', icon: '💬', adminOnly: false, badge: 'inbox' as const },
   { to: '/customers', label: 'Customers', icon: '👥', adminOnly: false },
   { to: '/orders', label: 'Orders', icon: '🛒', adminOnly: false },
   { to: '/pipeline', label: 'Pipeline', icon: '📈', adminOnly: false },
@@ -18,10 +19,24 @@ const navItems = [
 
 const mobileNav = navItems.filter((i) => !i.adminOnly).slice(0, 5)
 
+function InboxBadge({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <span className="ml-auto bg-green-500 text-white text-[10px] font-semibold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+      {count > 99 ? '99+' : count}
+    </span>
+  )
+}
+
 export default function Layout() {
   const user = useAuthStore((s) => s.user)
   const role = useAuthStore((s) => s.role)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { conversations } = useConversations()
+  const unreadTotal = useMemo(
+    () => conversations.reduce((sum, c) => sum + (c.unreadCount > 0 ? c.unreadCount : 0), 0),
+    [conversations],
+  )
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -52,7 +67,7 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-          {navItems.filter((item) => !item.adminOnly || role === 'admin').map(({ to, label, icon }) => (
+          {navItems.filter((item) => !item.adminOnly || role === 'admin').map(({ to, label, icon, badge }) => (
             <NavLink
               key={to}
               to={to}
@@ -67,7 +82,8 @@ export default function Layout() {
               }
             >
               <span className="text-base">{icon}</span>
-              {label}
+              <span className="truncate">{label}</span>
+              {badge === 'inbox' && <InboxBadge count={unreadTotal} />}
             </NavLink>
           ))}
         </nav>
@@ -104,18 +120,25 @@ export default function Layout() {
       </div>
 
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10 flex">
-        {mobileNav.map(({ to, label, icon }) => (
+        {mobileNav.map(({ to, label, icon, badge }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
             className={({ isActive }) =>
-              `flex-1 flex flex-col items-center justify-center py-2 text-xs transition-colors ${
+              `flex-1 flex flex-col items-center justify-center py-2 text-xs transition-colors relative ${
                 isActive ? 'text-green-600' : 'text-gray-400'
               }`
             }
           >
-            <span className="text-xl leading-none mb-0.5">{icon}</span>
+            <span className="text-xl leading-none mb-0.5 relative">
+              {icon}
+              {badge === 'inbox' && unreadTotal > 0 && (
+                <span className="absolute -top-1 -right-2 bg-green-500 text-white text-[9px] font-semibold rounded-full min-w-[14px] h-[14px] px-0.5 flex items-center justify-center">
+                  {unreadTotal > 9 ? '9+' : unreadTotal}
+                </span>
+              )}
+            </span>
             <span className="truncate w-full text-center">{label}</span>
           </NavLink>
         ))}

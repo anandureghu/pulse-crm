@@ -91,6 +91,7 @@ async function storeMedia(
   remoteJid: string,
   msgType: string,
   cfg: { apiUrl: string; apiKey: string; activeInstance: string },
+  fromMe = false,
 ): Promise<string | null> {
   try {
     const base = cfg.apiUrl.replace(/\/$/, '')
@@ -99,7 +100,7 @@ async function storeMedia(
       headers: { apikey: cfg.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: {
-          key: { id: messageId, fromMe: false, remoteJid },
+          key: { id: messageId, fromMe, remoteJid },
           messageType: `${msgType}Message`,
         },
       }),
@@ -144,20 +145,29 @@ async function storeMedia(
 
 async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient>, payload: EvolutionWebhookMessage) {
   const { data } = payload
-  if (data.key.fromMe) return
+  const remoteJid = data.key.remoteJid ?? ''
 
-  const phone = phoneFromJid(data.key.remoteJid)
+  // Skip groups / broadcasts — only 1:1 chats
+  if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return
+
+  const fromMe = Boolean(data.key.fromMe)
+  const phone = phoneFromJid(remoteJid)
+  if (!phone || phone.length < 8) return
+
   const text = extractText(data)
   const type = messageType(data)
-  const timestamp = new Date(data.messageTimestamp * 1000).toISOString()
+  const timestamp = new Date(
+    (typeof data.messageTimestamp === 'number' ? data.messageTimestamp : Number(data.messageTimestamp)) * 1000,
+  ).toISOString()
   const messageId = data.key.id
+  if (!messageId) return
 
   // Download and store media in Supabase Storage if this is a media message
   let media: string | null = null
   if (type !== 'text') {
     const cfg = await loadEvoCfg(supabase)
     if (cfg) {
-      media = await storeMedia(supabase, messageId, data.key.remoteJid, type, cfg)
+      media = await storeMedia(supabase, messageId, remoteJid, type, cfg, fromMe)
     }
     // Fall back to WhatsApp CDN URL from payload if storage failed
     if (!media) {
@@ -183,7 +193,7 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
 
   if (existingCustomer) {
     customerId = existingCustomer.id
-    if (data.pushName && existingCustomer.name === phone) {
+    if (!fromMe && data.pushName && existingCustomer.name === phone) {
       await supabase.from('customers').update({ name: data.pushName }).eq('id', customerId)
     }
   } else {
@@ -206,40 +216,54 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
 
   let conversationId: string
   const lastMsg = text || (media ? `[${type}]` : '')
+  const sender = fromMe ? 'agent' : 'customer'
 
   if (existingConv) {
     conversationId = existingConv.id
-    const { data: conv } = await supabase.from('conversations').select('unread_count').eq('id', conversationId).single()
-    await supabase.from('conversations').update({
-      last_message: lastMsg,
-      unread_count: (conv?.unread_count ?? 0) + 1,
-    }).eq('id', conversationId)
+    if (fromMe) {
+      // Outbound from WA Business app / phone — update preview, do not bump unread
+      await supabase.from('conversations').update({
+        last_message: lastMsg,
+      }).eq('id', conversationId)
+    } else {
+      const { data: conv } = await supabase.from('conversations').select('unread_count').eq('id', conversationId).single()
+      await supabase.from('conversations').update({
+        last_message: lastMsg,
+        unread_count: (conv?.unread_count ?? 0) + 1,
+      }).eq('id', conversationId)
+    }
   } else {
     const { data: newConv, error } = await supabase
       .from('conversations')
-      .insert({ customer_id: customerId, last_message: lastMsg, unread_count: 1 })
+      .insert({
+        customer_id: customerId,
+        last_message: lastMsg,
+        unread_count: fromMe ? 0 : 1,
+      })
       .select('id')
       .single()
     if (error || !newConv) throw error ?? new Error('Failed to create conversation')
     conversationId = newConv.id
   }
 
-  // 3. Insert message
+  // 3. Insert message (ignoreDuplicates so CRM-sent copies don't conflict)
   await supabase.from('messages').upsert(
     {
       id: messageId,
       conversation_id: conversationId,
-      sender: 'customer',
+      sender,
       type,
       text,
       media,
-      status: 'delivered',
+      status: fromMe ? 'sent' : 'delivered',
       timestamp,
     },
-    { onConflict: 'id', ignoreDuplicates: true }
+    { onConflict: 'id', ignoreDuplicates: true },
   )
 
-  // 4. Activity log
+  // Activity / new-lead only for inbound customer messages
+  if (fromMe) return
+
   const activityDesc = text
     ? `Customer sent message: "${text.slice(0, 100)}"`
     : `Customer sent ${type}`
@@ -258,7 +282,6 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
         created_by: 'system',
       })
     }
-    // Fire new_lead notification to team (background, non-blocking)
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     fetch(`${supabaseUrl}/functions/v1/notify-team`, {

@@ -4,6 +4,7 @@ import { getUsers } from '../lib/db'
 export interface AppUser {
   id: string
   email: string
+  username: string | null
   role: string
 }
 

@@ -35,8 +35,31 @@ export async function getCustomerByPhone(phone: string): Promise<Customer | null
   return data ? fromRow<Customer>(data) : null
 }
 
-export async function createCustomer(data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>) {
-  return supabase.from('customers').insert(toRow(data as Record<string, unknown>))
+export async function createCustomer(data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>): Promise<Customer> {
+  const { data: row, error } = await supabase
+    .from('customers')
+    .insert(toRow(data as Record<string, unknown>))
+    .select('*')
+    .single()
+  if (error || !row) throw error ?? new Error('Failed to create customer')
+  return fromRow<Customer>(row)
+}
+
+export async function ensureConversation(customerId: string): Promise<string> {
+  const { data: existing } = await supabase
+    .from('conversations')
+    .select('id')
+    .eq('customer_id', customerId)
+    .maybeSingle()
+  if (existing?.id) return existing.id as string
+
+  const { data: created, error } = await supabase
+    .from('conversations')
+    .insert({ customer_id: customerId, last_message: '', unread_count: 0 })
+    .select('id')
+    .single()
+  if (error || !created) throw error ?? new Error('Failed to create conversation')
+  return created.id as string
 }
 
 export async function updateCustomer(id: string, data: Partial<Customer>) {
@@ -361,7 +384,16 @@ export async function completeFollowup(id: string) {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
-export async function getUsers(): Promise<Array<{ id: string; email: string; role: string }>> {
-  const { data } = await supabase.from('users').select('id, email, role').order('email')
-  return (data ?? []) as Array<{ id: string; email: string; role: string }>
+export async function getUsers(): Promise<Array<{ id: string; email: string; username: string | null; role: string }>> {
+  const { data } = await supabase.from('users').select('id, email, username, role').order('email')
+  return (data ?? []).map((u) => ({
+    id: u.id as string,
+    email: u.email as string,
+    username: (u.username as string | null) ?? null,
+    role: u.role as string,
+  }))
+}
+
+export function userLabel(u: { username?: string | null; email: string }): string {
+  return (u.username?.trim() || u.email)
 }

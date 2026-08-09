@@ -121,12 +121,31 @@ export async function fetchMediaBase64(
 
 // ── Assign enquiry (direct DB write) ─────────────────────────────────────────
 
-export async function assignEnquiryFn(body: { enquiryId: string; assignTo: string }) {
+export async function assignEnquiryFn(body: { enquiryId: string; assignTo: string; customerId?: string }) {
   const { error } = await supabase
     .from('enquiries')
     .update({ assigned_to: body.assignTo || null })
     .eq('id', body.enquiryId)
   if (error) throw error
+
+  if (body.customerId) {
+    await supabase
+      .from('customers')
+      .update({ assigned_to: body.assignTo || null })
+      .eq('id', body.customerId)
+  } else {
+    const { data: enq } = await supabase
+      .from('enquiries')
+      .select('customer_id')
+      .eq('id', body.enquiryId)
+      .maybeSingle()
+    if (enq?.customer_id) {
+      await supabase
+        .from('customers')
+        .update({ assigned_to: body.assignTo || null })
+        .eq('id', enq.customer_id)
+    }
+  }
 
   await supabase.from('activities').insert({
     enquiry_id: body.enquiryId,

@@ -52,6 +52,7 @@ interface ShopifyOrderRow {
   id: string
   shopify_order_id: string | null
   shopify_order_name: string | null
+  customer_name: string | null
   phone: string | null
   email: string | null
   amount: number | null
@@ -118,6 +119,17 @@ export default function Orders() {
   const [recent, setRecent] = useState<ShopifyOrderRow[]>([])
   const [tagsInput, setTagsInput] = useState('')
   const [productSearch, setProductSearch] = useState('')
+  const [formKey, setFormKey] = useState(0)
+  const [syncingOrders, setSyncingOrders] = useState(false)
+  const [syncingCustomers, setSyncingCustomers] = useState(false)
+
+  const resetCreateForm = () => {
+    setPrompt('')
+    setDto(null)
+    setTagsInput('')
+    setSelectedByLine([])
+    setFormKey((k) => k + 1)
+  }
 
   const loadCache = useCallback(async () => {
     const { data } = await supabase.from('settings').select('value').eq('key', 'shopify_products').maybeSingle()
@@ -127,7 +139,7 @@ export default function Orders() {
   const loadRecent = useCallback(async () => {
     const { data } = await supabase
       .from('shopify_orders')
-      .select('id, shopify_order_id, shopify_order_name, phone, email, amount, tags, status, error, created_at')
+      .select('id, shopify_order_id, shopify_order_name, customer_name, phone, email, amount, tags, status, error, created_at')
       .order('created_at', { ascending: false })
       .limit(100)
     setRecent((data as ShopifyOrderRow[]) ?? [])
@@ -290,10 +302,7 @@ export default function Orders() {
         prompt,
       })
       toast(`Order ${res.orderName} created`, 'success')
-      setPrompt('')
-      setDto(null)
-      setTagsInput('')
-      setSelectedByLine([])
+      resetCreateForm()
       await loadRecent()
       setTab('orders')
       if (res.adminUrl) window.open(res.adminUrl, '_blank', 'noopener,noreferrer')
@@ -320,6 +329,41 @@ export default function Orders() {
               ? <>Last sync: {new Date(cache.syncedAt).toLocaleString()} · {cache.rawCount} variants</>
               : 'Products not synced yet'}
           </div>
+          <button
+            onClick={async () => {
+              setSyncingCustomers(true)
+              try {
+                const res = await invokeFunction<{ synced: number; skipped: number }>('sync-shopify-customers', {})
+                toast(`Synced ${res.synced} customers`, 'success')
+              } catch (e) {
+                toast((e as Error).message, 'error')
+              } finally {
+                setSyncingCustomers(false)
+              }
+            }}
+            disabled={syncingCustomers}
+            className="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+          >
+            {syncingCustomers ? '…' : 'Sync customers'}
+          </button>
+          <button
+            onClick={async () => {
+              setSyncingOrders(true)
+              try {
+                const res = await invokeFunction<{ synced: number }>('sync-shopify-orders', {})
+                toast(`Synced ${res.synced} orders`, 'success')
+                await loadRecent()
+              } catch (e) {
+                toast((e as Error).message, 'error')
+              } finally {
+                setSyncingOrders(false)
+              }
+            }}
+            disabled={syncingOrders}
+            className="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+          >
+            {syncingOrders ? '…' : 'Sync orders'}
+          </button>
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -354,7 +398,7 @@ export default function Orders() {
       </div>
 
       {tab === 'create' && (
-        <>
+        <div key={formKey}>
           <div className="bg-white rounded-xl border border-gray-200 p-5 mb-5 space-y-4">
             <div>
               <label className="block text-sm text-gray-600 mb-1">Order prompt</label>
@@ -536,7 +580,7 @@ export default function Orders() {
               </button>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {tab === 'products' && (
@@ -609,6 +653,7 @@ export default function Orders() {
                 <thead>
                   <tr className="text-left text-gray-500 border-b border-gray-100">
                     <th className="py-2 pr-3 font-medium">Order</th>
+                    <th className="py-2 pr-3 font-medium">Customer</th>
                     <th className="py-2 pr-3 font-medium">Phone</th>
                     <th className="py-2 pr-3 font-medium">Email</th>
                     <th className="py-2 pr-3 font-medium">Amount</th>
@@ -622,6 +667,9 @@ export default function Orders() {
                     <tr key={row.id} className="border-b border-gray-50">
                       <td className="py-2 pr-3 font-mono text-gray-800">
                         {row.shopify_order_name ?? '—'}
+                      </td>
+                      <td className="py-2 pr-3 text-gray-800 whitespace-nowrap">
+                        {row.customer_name || '—'}
                       </td>
                       <td className="py-2 pr-3 text-gray-600">{row.phone ?? '—'}</td>
                       <td className="py-2 pr-3 text-gray-500">{row.email ?? '—'}</td>
