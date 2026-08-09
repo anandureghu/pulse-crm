@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCustomers } from '../hooks/useCustomers'
 import { createCustomer, ensureConversation } from '../lib/db'
-import { normalizePhoneForStorage, formatPhoneDisplay } from '../lib/phone'
+import { normalizePhoneForStorage, formatPhoneDisplay, isValidIndianMobile } from '../lib/phone'
 import { toast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
 
@@ -25,8 +25,8 @@ export default function Customers() {
 
   const handleAdd = async () => {
     const phoneNorm = normalizePhoneForStorage(phone)
-    if (!name.trim() || phoneNorm.length < 8) {
-      toast('Enter a name and valid phone number', 'error')
+    if (!name.trim() || !isValidIndianMobile(phone)) {
+      toast('Enter a name and a valid 10-digit Indian mobile (with or without +91)', 'error')
       return
     }
     setSaving(true)
@@ -192,7 +192,9 @@ export default function Customers() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                   placeholder="9198XXXXXXXX"
                 />
-                <p className="text-xs text-gray-400 mt-1">Include country code (e.g. 91…)</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  10 digits, or with 91 / +91 — saved as +91XXXXXXXXXX
+                </p>
               </div>
             </div>
             <div className="flex gap-2 mt-5">

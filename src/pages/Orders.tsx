@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { toast } from '../components/Toast'
+import { formatPhoneDisplay } from '../lib/phone'
 
 interface CachedVariant {
   variantId: number
@@ -671,7 +672,9 @@ export default function Orders() {
                       <td className="py-2 pr-3 text-gray-800 whitespace-nowrap">
                         {row.customer_name || '—'}
                       </td>
-                      <td className="py-2 pr-3 text-gray-600">{row.phone ?? '—'}</td>
+                      <td className="py-2 pr-3 text-gray-600 whitespace-nowrap">
+                        {row.phone ? formatPhoneDisplay(row.phone) : '—'}
+                      </td>
                       <td className="py-2 pr-3 text-gray-500">{row.email ?? '—'}</td>
                       <td className="py-2 pr-3 text-gray-600">
                         {row.amount != null ? `₹${Number(row.amount).toFixed(2)}` : '—'}

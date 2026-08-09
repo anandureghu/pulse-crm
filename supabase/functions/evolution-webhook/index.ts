@@ -45,7 +45,15 @@ Deno.serve(async (req) => {
 })
 
 function phoneFromJid(jid: string): string {
-  return jid.replace(/@s\.whatsapp\.net$/, '').replace(/@.*$/, '')
+  const raw = jid.replace(/@s\.whatsapp\.net$/, '').replace(/@.*$/, '')
+  const digits = raw.replace(/\D/g, '')
+  // Canonical IN storage: 91 + 10-digit mobile (length 12)
+  if (digits.length === 10 && /^[6-9]/.test(digits)) return `91${digits}`
+  if (digits.length === 12 && digits.startsWith('91')) return digits
+  if (digits.length === 11 && digits.startsWith('0') && /^[6-9]/.test(digits.slice(1))) {
+    return `91${digits.slice(1)}`
+  }
+  return digits
 }
 
 function extractText(data: EvolutionWebhookMessage['data']): string {

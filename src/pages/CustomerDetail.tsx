@@ -12,6 +12,7 @@ import { useAuthStore } from '../store/authStore'
 import { assignEnquiryFn, updateEnquiryStatusFn } from '../lib/functions'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
+import { formatPhoneDisplay, telHref } from '../lib/phone'
 import type { Customer, Enquiry } from '../types'
 
 type Tab = 'profile' | 'timeline' | 'whatsapp' | 'notes' | 'enquiries' | 'files' | 'calls' | 'payments'
@@ -159,8 +160,13 @@ export default function CustomerDetail() {
                 <button onClick={() => setEditingName(true)} className="text-gray-400 hover:text-gray-600 text-xs flex-shrink-0">✏️</button>
               </div>
             )}
-            <p className="text-xs text-gray-500">
-              {customer.phone.startsWith('+') ? customer.phone : `+${customer.phone}`}
+            <p className="text-xs text-gray-500 flex items-center gap-2">
+              <span>{formatPhoneDisplay(customer.phone)}</span>
+              {customer.phone && (
+                <a href={telHref(customer.phone)} className="text-green-600 hover:text-green-700">
+                  Call
+                </a>
+              )}
             </p>
           </div>
         </div>
@@ -352,9 +358,7 @@ function ProfileTab({
         <dl className="space-y-2 text-sm">
           <div className="flex justify-between">
             <dt className="text-gray-500">Phone</dt>
-            <dd className="text-gray-800 font-medium">
-              {customer.phone.startsWith('+') ? customer.phone : `+${customer.phone}`}
-            </dd>
+            <dd className="text-gray-800 font-medium">{formatPhoneDisplay(customer.phone)}</dd>
           </div>
           <div className="flex justify-between">
             <dt className="text-gray-500">Customer since</dt>

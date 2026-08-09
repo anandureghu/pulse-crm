@@ -77,7 +77,7 @@ export function subscribeToCustomers(onData: (customers: Customer[]) => void): U
   fetch()
 
   const channel = supabase
-    .channel('customers')
+    .channel(`customers:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, fetch)
     .subscribe()
 
@@ -110,7 +110,7 @@ export function subscribeToEnquiries(onData: (enquiries: Enquiry[]) => void): Un
   fetch()
 
   const channel = supabase
-    .channel('enquiries')
+    .channel(`enquiries:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, fetch)
     .subscribe()
 
@@ -177,8 +177,9 @@ export function subscribeToConversations(onData: (convs: Conversation[]) => void
 
   fetch()
 
+  // Unique channel name — Layout + Inbox both subscribe; reusing 'conversations' breaks after subscribe()
   const channel = supabase
-    .channel('conversations')
+    .channel(`conversations:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, fetch)
     .subscribe()
 
@@ -367,7 +368,7 @@ export function subscribeToAllFollowups(onData: (followups: Followup[]) => void)
   fetch()
 
   const channel = supabase
-    .channel('followups')
+    .channel(`followups:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'followups' }, fetch)
     .subscribe()
 

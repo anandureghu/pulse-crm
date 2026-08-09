@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { normalizePhoneForStorage } from './phone'
 
 // ── Shared: load Evolution API config from settings table ─────────────────────
 
@@ -49,7 +50,7 @@ export async function sendMessageFn(body: {
     .from('customers').select('phone').eq('id', conv.customer_id).single()
   if (!customer) throw new Error('Customer not found')
 
-  const to = `${customer.phone}@s.whatsapp.net`
+  const to = `${normalizePhoneForStorage(customer.phone)}@s.whatsapp.net`
 
   let evoMsgId: string
   if (body.mediaUrl && body.mediaType) {
@@ -93,11 +94,12 @@ export async function fetchMediaBase64(
 ): Promise<string | null> {
   try {
     const cfg = await loadEvoCfg()
+    const jidPhone = normalizePhoneForStorage(phone)
     const res = await evoPost(
       `/chat/getBase64FromMediaMessage/${cfg.activeInstance}`,
       {
         message: {
-          key: { id: messageId, fromMe: false, remoteJid: `${phone}@s.whatsapp.net` },
+          key: { id: messageId, fromMe: false, remoteJid: `${jidPhone}@s.whatsapp.net` },
           messageType: `${msgType}Message`,
         },
       },

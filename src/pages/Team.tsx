@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
 import { toast } from '../components/Toast'
+import { formatPhoneDisplay } from '../lib/phone'
 
 type TeamMember = {
   id: string
@@ -299,7 +300,7 @@ export default function Team() {
                         {m.phone ? (
                           <>
                             <span className="text-green-600">📱</span>
-                            <span>{m.phone}</span>
+                            <span>{formatPhoneDisplay(m.phone)}</span>
                           </>
                         ) : (
                           <span className="text-gray-300 group-hover:text-gray-500">+ Add number</span>
