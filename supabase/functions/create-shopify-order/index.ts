@@ -6,6 +6,7 @@ import {
   isAddressComplete,
   findShopifyCustomer,
   mergeCustomerFromShopify,
+  toShopifyMailingAddress,
   type OrderDto,
 } from '../_shared/shopify.ts'
 import { ensureProvince } from '../_shared/address.ts'
@@ -104,23 +105,15 @@ Deno.serve(async (req) => {
     if (!shopifyCustomerId) {
       const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
       const addressBlock = {
-        address1: dto.customer.address1,
-        address2: dto.customer.address2 || undefined,
-        city: dto.customer.city,
-        province: dto.customer.province || undefined,
-        zip: dto.customer.zip,
-        country: dto.customer.country || 'IN',
-        phone: phoneE164,
-        first_name: dto.customer.firstName || 'Customer',
-        last_name: dto.customer.lastName || '',
+        ...toShopifyMailingAddress(dto.customer, phoneE164),
         default: true,
       }
       const { data: created } = await shopifyFetch<{ customer: { id: number } }>(cfg, '/customers.json', {
         method: 'POST',
         body: JSON.stringify({
           customer: {
-            first_name: dto.customer.firstName || 'Customer',
-            last_name: dto.customer.lastName || '',
+            first_name: addressBlock.first_name,
+            last_name: addressBlock.last_name,
             email: dto.customer.email || undefined,
             phone: phoneE164,
             verified_email: false,
@@ -130,31 +123,22 @@ Deno.serve(async (req) => {
       })
       shopifyCustomerId = String(created.customer.id)
     } else {
-      // Keep Shopify customer shipping + billing address in sync with the order DTO
+      // Keep Shopify customer default address in sync with the order DTO
       const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
+      const addressBlock = {
+        ...toShopifyMailingAddress(dto.customer, phoneE164),
+        default: true,
+      }
       try {
         await shopifyFetch(cfg, `/customers/${shopifyCustomerId}.json`, {
           method: 'PUT',
           body: JSON.stringify({
             customer: {
               id: Number(shopifyCustomerId),
-              first_name: dto.customer.firstName || undefined,
-              last_name: dto.customer.lastName || undefined,
+              first_name: addressBlock.first_name,
+              last_name: addressBlock.last_name,
               email: dto.customer.email || undefined,
-              addresses: [
-                {
-                  address1: dto.customer.address1,
-                  address2: dto.customer.address2 || undefined,
-                  city: dto.customer.city,
-                  province: dto.customer.province || undefined,
-                  zip: dto.customer.zip,
-                  country: dto.customer.country || 'IN',
-                  phone: phoneE164,
-                  first_name: dto.customer.firstName || 'Customer',
-                  last_name: dto.customer.lastName || '',
-                  default: true,
-                },
-              ],
+              addresses: [addressBlock],
             },
           }),
         })
@@ -170,20 +154,9 @@ Deno.serve(async (req) => {
     const isCod = tags.some((t) => t.toUpperCase() === 'COD') || dto.financialStatus === 'pending'
 
     const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
-    const addressFields = {
-      first_name: dto.customer.firstName || 'Customer',
-      last_name: dto.customer.lastName || '',
-      address1: dto.customer.address1,
-      address2: dto.customer.address2 || undefined,
-      city: dto.customer.city,
-      province: dto.customer.province || undefined,
-      zip: dto.customer.zip,
-      country: dto.customer.country || 'IN',
-      phone: phoneE164,
-    }
-    // Explicit separate objects so Shopify always receives both shipping + billing
-    const shippingAddress = { ...addressFields }
-    const billingAddress = { ...addressFields }
+    // Distinct objects; Shopify requires non-empty first_name + last_name or it drops both addresses
+    const shippingAddress = toShopifyMailingAddress(dto.customer, phoneE164)
+    const billingAddress = { ...shippingAddress }
 
     const order: Record<string, unknown> = {
       line_items: selected.map((l) => ({
@@ -222,14 +195,38 @@ Deno.serve(async (req) => {
       ]
     }
 
-    const { data: orderRes } = await shopifyFetch<{ order: { id: number; name: string } }>(
-      cfg,
-      '/orders.json',
-      { method: 'POST', body: JSON.stringify(orderPayload) },
-    )
+    const { data: orderRes } = await shopifyFetch<{
+      order: {
+        id: number
+        name: string
+        shipping_address?: { address1?: string | null } | null
+        billing_address?: { address1?: string | null } | null
+      }
+    }>(cfg, '/orders.json', { method: 'POST', body: JSON.stringify(orderPayload) })
 
     shopifyOrderId = String(orderRes.order.id)
     shopifyOrderName = orderRes.order.name
+
+    // If Shopify still dropped addresses, force-update the order
+    const shipOk = Boolean(orderRes.order.shipping_address?.address1?.trim())
+    const billOk = Boolean(orderRes.order.billing_address?.address1?.trim())
+    if (!shipOk || !billOk) {
+      console.warn('Order created without addresses; applying PUT fix', {
+        orderId: shopifyOrderId,
+        shipOk,
+        billOk,
+      })
+      await shopifyFetch(cfg, `/orders/${shopifyOrderId}.json`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          order: {
+            id: Number(shopifyOrderId),
+            shipping_address: shippingAddress,
+            billing_address: billingAddress,
+          },
+        }),
+      })
+    }
 
     await supabase.from('shopify_orders').insert({
       shopify_order_id: shopifyOrderId,

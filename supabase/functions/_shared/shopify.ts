@@ -76,6 +76,39 @@ export function isAddressComplete(c: OrderCustomerDto): boolean {
   return Boolean(c.address1?.trim() && c.city?.trim() && c.zip?.trim())
 }
 
+/**
+ * Build a Shopify mailing address. Shopify silently drops shipping_address /
+ * billing_address on order create if first_name OR last_name is blank.
+ */
+export function toShopifyMailingAddress(
+  customer: OrderCustomerDto,
+  phoneE164: string,
+): Record<string, string> {
+  const first = (customer.firstName || '').trim() || 'Customer'
+  // Empty last_name → Shopify ignores the entire address object
+  const last = (customer.lastName || '').trim() || '.'
+
+  const countryRaw = (customer.country || 'IN').trim()
+  const upper = countryRaw.toUpperCase()
+  const isIN = upper === 'IN' || upper === 'INDIA'
+
+  const addr: Record<string, string> = {
+    first_name: first,
+    last_name: last,
+    address1: (customer.address1 || '').trim(),
+    city: (customer.city || '').trim(),
+    zip: (customer.zip || '').trim(),
+    phone: phoneE164,
+    country: isIN ? 'India' : countryRaw,
+    country_code: isIN ? 'IN' : upper.slice(0, 2),
+  }
+  const address2 = (customer.address2 || '').trim()
+  if (address2) addr.address2 = address2
+  const province = (customer.province || '').trim()
+  if (province) addr.province = province
+  return addr
+}
+
 interface ShopifyAddress {
   address1?: string
   address2?: string
