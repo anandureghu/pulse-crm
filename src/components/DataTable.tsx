@@ -15,6 +15,8 @@ export interface DataTableColumn<T> {
   sortable?: boolean
   /** Unique filter values derived from accessor; enable column filter dropdown */
   filterable?: boolean
+  /** Label for blank accessor values in the filter dropdown (default: Unassigned) */
+  filterEmptyLabel?: string
   cell?: (row: T) => ReactNode
   className?: string
   headerClassName?: string
@@ -39,7 +41,7 @@ export interface DataTableProps<T> {
   secondaryCompare?: (a: T, b: T) => number
   onRowClick?: (row: T) => void
   toolbar?: ReactNode
-  /** Extra controls rendered in the filter bar (chips, etc.) */
+  /** Extra controls rendered in the filter bar (dropdowns, etc.) */
   filterBar?: ReactNode
   className?: string
 }
@@ -90,14 +92,31 @@ export function DataTable<T>({
   const filterableColumns = columns.filter((c) => c.filterable)
 
   const filterOptions = useMemo(() => {
-    const map: Record<string, string[]> = {}
+    const map: Record<string, Array<{ value: string; label: string; count: number }>> = {}
     for (const col of filterableColumns) {
-      const set = new Set<string>()
+      const counts = new Map<string, number>()
+      let emptyCount = 0
       for (const row of data) {
         const v = col.accessor(row)
-        if (v != null && String(v).trim()) set.add(String(v))
+        if (v == null || !String(v).trim()) {
+          emptyCount += 1
+          continue
+        }
+        const key = String(v)
+        counts.set(key, (counts.get(key) ?? 0) + 1)
       }
-      map[col.id] = Array.from(set).sort((a, b) => a.localeCompare(b))
+      const opts = Array.from(counts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+        .map(([value, count]) => ({ value, label: `${value} (${count})`, count }))
+      if (emptyCount > 0) {
+        const emptyLabel = col.filterEmptyLabel ?? 'Unassigned'
+        opts.unshift({
+          value: '__empty__',
+          label: `${emptyLabel} (${emptyCount})`,
+          count: emptyCount,
+        })
+      }
+      map[col.id] = opts
     }
     return map
   }, [data, filterableColumns])
@@ -112,12 +131,17 @@ export function DataTable<T>({
       for (const col of filterableColumns) {
         const selected = columnFilters[col.id]
         if (!selected) continue
-        if (String(col.accessor(row) ?? '') !== selected) return false
+        const raw = col.accessor(row)
+        const empty = raw == null || !String(raw).trim()
+        if (selected === '__empty__') {
+          if (!empty) return false
+        } else if (String(raw ?? '') !== selected) {
+          return false
+        }
       }
       return true
     })
   }, [data, search, columns, searchFilter, filterableColumns, columnFilters])
-
   const sorted = useMemo(() => {
     const col = sortId ? columns.find((c) => c.id === sortId) : null
     const rows = [...filtered]
@@ -208,9 +232,9 @@ export function DataTable<T>({
                   }
                   className="border border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500 bg-white min-w-[140px]"
                 >
-                  <option value="">All</option>
+                  <option value="">All ({data.length})</option>
                   {filterOptions[col.id]?.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
               </label>
