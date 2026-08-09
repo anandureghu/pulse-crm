@@ -27,6 +27,7 @@ function customerName(c: ShopifyCustomer): string {
   return n || c.email || c.phone || `Shopify ${c.id}`
 }
 
+/** Local 10-digit or 12-digit 91… from Shopify; null if unusable. */
 function customerPhone(c: ShopifyCustomer): string | null {
   const raw =
     c.phone
@@ -35,6 +36,13 @@ function customerPhone(c: ShopifyCustomer): string | null {
     || ''
   const digits = normalizePhoneDigits(raw)
   return digits.length >= 8 ? digits : null
+}
+
+function toStoredPhone(digits: string): string {
+  if (digits.length === 10) return `91${digits}`
+  if (digits.length === 12 && digits.startsWith('91')) return digits
+  if (digits.length > 10 && digits.startsWith('91')) return digits.slice(0, 12)
+  return digits.length === 10 ? `91${digits}` : digits
 }
 
 Deno.serve(async (req) => {
@@ -64,6 +72,7 @@ Deno.serve(async (req) => {
           skipped++
           continue
         }
+        const phoneStored = toStoredPhone(phone)
         const name = customerName(c)
         const email = c.email?.trim() || null
         const shopifyId = String(c.id)
@@ -74,22 +83,41 @@ Deno.serve(async (req) => {
           .eq('shopify_customer_id', shopifyId)
           .maybeSingle()
 
-        const { data: byPhone } = byShopify
-          ? { data: null }
-          : await supabase.from('customers').select('id').eq('phone', phone).maybeSingle()
+        let existingId = byShopify?.id as string | undefined
+        if (!existingId) {
+          const candidates = [phoneStored]
+          if (phoneStored.startsWith('91') && phoneStored.length === 12) {
+            candidates.push(phoneStored.slice(2))
+          }
+          for (const p of candidates) {
+            const { data: hit } = await supabase.from('customers').select('id').eq('phone', p).maybeSingle()
+            if (hit?.id) {
+              existingId = hit.id
+              break
+            }
+          }
+        }
 
-        const existingId = byShopify?.id ?? byPhone?.id
         if (existingId) {
+          const { data: existing } = await supabase
+            .from('customers')
+            .select('tags')
+            .eq('id', existingId)
+            .maybeSingle()
+          const tags = Array.isArray(existing?.tags) ? [...existing.tags as string[]] : []
+          if (!tags.map((t) => t.toLowerCase()).includes('shopify')) tags.push('shopify')
+          // Do not touch assigned_to — preserve CRM assignments
           await supabase.from('customers').update({
             name,
             email,
-            phone,
+            phone: phoneStored,
             shopify_customer_id: shopifyId,
+            tags,
           }).eq('id', existingId)
         } else {
           await supabase.from('customers').insert({
             name,
-            phone,
+            phone: phoneStored,
             email,
             shopify_customer_id: shopifyId,
             assigned_to: null,

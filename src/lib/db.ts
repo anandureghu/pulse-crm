@@ -67,18 +67,41 @@ export async function updateCustomer(id: string, data: Partial<Customer>) {
 }
 
 export function subscribeToCustomers(onData: (customers: Customer[]) => void): Unsubscribe {
-  const fetch = () =>
-    supabase
-      .from('customers')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .then(({ data }) => onData((data ?? []).map(fromRow<Customer>)))
+  const fetch = async () => {
+    const [{ data: rows }, { data: enquiries }] = await Promise.all([
+      supabase.from('customers').select('*').order('created_at', { ascending: false }),
+      supabase
+        .from('enquiries')
+        .select('customer_id, assigned_to, created_at')
+        .order('created_at', { ascending: false }),
+    ])
+
+    // Latest enquiry assignee per customer (assignments often lived only on enquiries)
+    const latestAssign = new Map<string, string>()
+    for (const e of enquiries ?? []) {
+      const cid = e.customer_id as string | null
+      const assigned = (e.assigned_to as string | null)?.trim()
+      if (!cid || !assigned || latestAssign.has(cid)) continue
+      latestAssign.set(cid, assigned)
+    }
+
+    onData(
+      (rows ?? []).map((row) => {
+        const c = fromRow<Customer>(row as Record<string, unknown>)
+        if (!c.assignedTo?.trim()) {
+          c.assignedTo = latestAssign.get(c.id) ?? null
+        }
+        return c
+      }),
+    )
+  }
 
   fetch()
 
   const channel = supabase
     .channel(`customers:${crypto.randomUUID()}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, fetch)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => { fetch() })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, () => { fetch() })
     .subscribe()
 
   return () => { supabase.removeChannel(channel) }

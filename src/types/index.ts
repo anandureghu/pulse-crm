@@ -22,6 +22,8 @@ export interface Customer {
   assignedTo: string | null
   tags: string[]
   aiAutoreply: boolean
+  email?: string | null
+  shopifyCustomerId?: string | null
   createdAt: string
   updatedAt: string
 }

@@ -1,27 +1,25 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCustomers } from '../hooks/useCustomers'
 import { createCustomer, ensureConversation } from '../lib/db'
 import { normalizePhoneForStorage, formatPhoneDisplay, isValidIndianMobile } from '../lib/phone'
 import { toast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
+import { DataTable, type DataTableColumn } from '../components/DataTable'
+import type { Customer } from '../types'
+
+function hasShopifyTag(c: Customer): boolean {
+  return (c.tags ?? []).some((t) => t.toLowerCase() === 'shopify') || Boolean(c.shopifyCustomerId)
+}
 
 export default function Customers() {
   const { customers, loading } = useCustomers()
   const navigate = useNavigate()
-  const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
-
-  const filtered = customers.filter(
-    (c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.phone.includes(search) ||
-      (c.assignedTo ?? '').toLowerCase().includes(search.toLowerCase())
-  )
 
   const handleAdd = async () => {
     const phoneNorm = normalizePhoneForStorage(phone)
@@ -84,6 +82,65 @@ export default function Customers() {
     }
   }
 
+  const columns = useMemo<DataTableColumn<Customer>[]>(
+    () => [
+      {
+        id: 'name',
+        header: 'Name',
+        accessor: (c) => c.name,
+        className: 'font-medium text-gray-800 whitespace-nowrap',
+      },
+      {
+        id: 'phone',
+        header: 'Phone',
+        accessor: (c) => formatPhoneDisplay(c.phone),
+        className: 'text-gray-600 whitespace-nowrap',
+        cell: (c) => formatPhoneDisplay(c.phone),
+      },
+      {
+        id: 'assignedTo',
+        header: 'Assigned To',
+        accessor: (c) => c.assignedTo?.trim() || null,
+        filterable: true,
+        className: 'text-gray-600 whitespace-nowrap',
+        cell: (c) => c.assignedTo?.trim() || '—',
+      },
+      {
+        id: 'tags',
+        header: 'Tags',
+        accessor: (c) => (hasShopifyTag(c) ? 'shopify' : (c.tags ?? [])[0] || ''),
+        filterable: true,
+        sortable: true,
+        cell: (c) =>
+          c.tags?.length ? (
+            <span className="flex flex-wrap gap-1">
+              {c.tags.map((t) => (
+                <span key={t} className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">
+                  {t}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="text-gray-300">—</span>
+          ),
+      },
+      {
+        id: 'createdAt',
+        header: 'Created',
+        accessor: (c) => (c.createdAt ? new Date(c.createdAt).getTime() : 0),
+        className: 'text-gray-500 whitespace-nowrap',
+        cell: (c) => (c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'),
+      },
+    ],
+    [],
+  )
+
+  const shopifyLast = (a: Customer, b: Customer) => {
+    const as = hasShopifyTag(a) ? 1 : 0
+    const bs = hasShopifyTag(b) ? 1 : 0
+    return as - bs
+  }
+
   return (
     <div className="p-4 sm:p-6 max-w-full">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
@@ -109,64 +166,31 @@ export default function Customers() {
           </button>
         </div>
       </div>
-      <div className="mb-4">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name, phone, or assignee…"
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full max-w-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-        />
-      </div>
-      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="text-left px-4 py-3 text-gray-600 font-medium">Name</th>
-              <th className="text-left px-4 py-3 text-gray-600 font-medium">Phone</th>
-              <th className="text-left px-4 py-3 text-gray-600 font-medium">Assigned To</th>
-              <th className="text-left px-4 py-3 text-gray-600 font-medium">Tags</th>
-              <th className="text-left px-4 py-3 text-gray-600 font-medium">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-400 text-sm">Loading…</td>
-              </tr>
-            )}
-            {!loading && filtered.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-400 text-sm">
-                  {search
-                    ? 'No customers match your search.'
-                    : 'No customers yet. Add one manually or wait for WhatsApp messages.'}
-                </td>
-              </tr>
-            )}
-            {filtered.map((c) => (
-              <tr
-                key={c.id}
-                onClick={() => navigate(`/customers/${c.id}`)}
-                className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-              >
-                <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{c.name}</td>
-                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatPhoneDisplay(c.phone)}</td>
-                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.assignedTo ?? '—'}</td>
-                <td className="px-4 py-3">
-                  {c.tags?.map((t) => (
-                    <span key={t} className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full mr-1">
-                      {t}
-                    </span>
-                  ))}
-                </td>
-                <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                  {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : ''}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+
+      <DataTable
+        data={customers}
+        columns={columns}
+        getRowId={(c) => c.id}
+        loading={loading}
+        searchPlaceholder="Search by name, phone, or assignee…"
+        searchFilter={(c, q) => {
+          if (!q.trim()) return true
+          const s = q.trim().toLowerCase()
+          return (
+            c.name.toLowerCase().includes(s)
+            || c.phone.includes(s)
+            || formatPhoneDisplay(c.phone).includes(s)
+            || (c.assignedTo ?? '').toLowerCase().includes(s)
+            || (c.tags ?? []).some((t) => t.toLowerCase().includes(s))
+          )
+        }}
+        defaultSort={{ id: 'createdAt', dir: 'desc' }}
+        secondaryCompare={shopifyLast}
+        defaultPageSize={25}
+        pageSizeOptions={[10, 25, 50, 100]}
+        onRowClick={(c) => navigate(`/customers/${c.id}`)}
+        emptyMessage="No customers yet. Add one manually or wait for WhatsApp messages."
+      />
 
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
