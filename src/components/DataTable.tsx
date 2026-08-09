@@ -34,12 +34,13 @@ export interface DataTableProps<T> {
   defaultSort?: { id: string; dir: SortDir }
   /**
    * Partitioning compare applied *before* the active column sort.
-   * Use to pin groups (e.g. Shopify-tagged rows) to the bottom while still
-   * sorting within each group.
+   * Lower values sort first (e.g. assigned=0, organic=1, shopify=2).
    */
   secondaryCompare?: (a: T, b: T) => number
   onRowClick?: (row: T) => void
   toolbar?: ReactNode
+  /** Extra controls rendered in the filter bar (chips, etc.) */
+  filterBar?: ReactNode
   className?: string
 }
 
@@ -71,11 +72,12 @@ export function DataTable<T>({
   searchPlaceholder = 'Search…',
   searchFilter,
   pageSizeOptions = [10, 25, 50, 100],
-  defaultPageSize = 25,
+  defaultPageSize = 10,
   defaultSort,
   secondaryCompare,
   onRowClick,
   toolbar,
+  filterBar,
   className = '',
 }: DataTableProps<T>) {
   const [search, setSearch] = useState('')
@@ -130,7 +132,7 @@ export function DataTable<T>({
     return rows
   }, [filtered, columns, sortId, sortDir, secondaryCompare])
 
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize) || 1)
   const safePage = Math.min(page, pageCount - 1)
   const pageRows = sorted.slice(safePage * pageSize, safePage * pageSize + pageSize)
 
@@ -149,44 +151,72 @@ export function DataTable<T>({
 
   const from = sorted.length === 0 ? 0 : safePage * pageSize + 1
   const to = Math.min(sorted.length, (safePage + 1) * pageSize)
+  const hasActiveFilters = Object.values(columnFilters).some(Boolean) || search.trim().length > 0
+
+  const clearFilters = () => {
+    setSearch('')
+    setColumnFilters({})
+  }
+
+  // Page number window around current page
+  const pageButtons = useMemo(() => {
+    const maxButtons = 5
+    let start = Math.max(0, safePage - Math.floor(maxButtons / 2))
+    let end = start + maxButtons - 1
+    if (end >= pageCount) {
+      end = pageCount - 1
+      start = Math.max(0, end - maxButtons + 1)
+    }
+    const pages: number[] = []
+    for (let i = start; i <= end; i++) pages.push(i)
+    return pages
+  }, [safePage, pageCount])
 
   return (
     <div className={`space-y-3 ${className}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={searchPlaceholder}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-green-500"
-        />
-        {filterableColumns.map((col) => (
-          <select
-            key={col.id}
-            value={columnFilters[col.id] ?? ''}
-            onChange={(e) =>
-              setColumnFilters((prev) => ({ ...prev, [col.id]: e.target.value }))
-            }
-            className="border border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-          >
-            <option value="">All {col.header.toLowerCase()}</option>
-            {filterOptions[col.id]?.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
-            ))}
-          </select>
-        ))}
-        {toolbar}
-        <div className="ml-auto flex items-center gap-2 text-xs text-gray-500">
-          <span>Rows</span>
-          <select
-            value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
-            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-          >
-            {pageSizeOptions.map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
+      {/* Search + filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={searchPlaceholder}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-green-500"
+          />
+          {toolbar}
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-sm text-gray-500 hover:text-gray-800 px-2 py-1.5"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
+
+        {(filterableColumns.length > 0 || filterBar) && (
+          <div className="flex flex-wrap items-end gap-3">
+            {filterBar}
+            {filterableColumns.map((col) => (
+              <label key={col.id} className="flex flex-col gap-1 text-xs text-gray-500">
+                <span className="font-medium text-gray-600">Filter: {col.header}</span>
+                <select
+                  value={columnFilters[col.id] ?? ''}
+                  onChange={(e) =>
+                    setColumnFilters((prev) => ({ ...prev, [col.id]: e.target.value }))
+                  }
+                  className="border border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500 bg-white min-w-[140px]"
+                >
+                  <option value="">All</option>
+                  {filterOptions[col.id]?.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
@@ -258,31 +288,76 @@ export function DataTable<T>({
         </table>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">
-        <span>
-          {sorted.length === 0
-            ? '0 results'
-            : `Showing ${from}–${to} of ${sorted.length}`}
-        </span>
+      {/* Pagination — always visible */}
+      <div className="bg-white rounded-xl border border-gray-200 px-3 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 text-sm text-gray-600">
+          <span>
+            {sorted.length === 0
+              ? '0 results'
+              : `Showing ${from}–${to} of ${sorted.length}`}
+          </span>
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+            Per page
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+            >
+              {pageSizeOptions.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         <div className="flex items-center gap-1">
           <button
             type="button"
             disabled={safePage <= 0}
+            onClick={() => setPage(0)}
+            className="px-2 py-1.5 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 disabled:opacity-40"
+            aria-label="First page"
+          >
+            «
+          </button>
+          <button
+            type="button"
+            disabled={safePage <= 0}
             onClick={() => setPage((p) => Math.max(0, p - 1))}
-            className="px-2.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+            className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 disabled:opacity-40"
           >
             Prev
           </button>
-          <span className="px-2 text-xs">
-            Page {safePage + 1} / {pageCount}
-          </span>
+          {pageButtons.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPage(p)}
+              className={`min-w-[32px] px-2 py-1.5 rounded-lg border text-sm ${
+                p === safePage
+                  ? 'border-green-600 bg-green-50 text-green-700 font-medium'
+                  : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+              }`}
+            >
+              {p + 1}
+            </button>
+          ))}
           <button
             type="button"
             disabled={safePage >= pageCount - 1}
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-            className="px-2.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+            className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 disabled:opacity-40"
           >
             Next
+          </button>
+          <button
+            type="button"
+            disabled={safePage >= pageCount - 1}
+            onClick={() => setPage(pageCount - 1)}
+            className="px-2 py-1.5 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 disabled:opacity-40"
+            aria-label="Last page"
+          >
+            »
           </button>
         </div>
       </div>

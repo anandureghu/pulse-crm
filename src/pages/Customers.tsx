@@ -12,6 +12,30 @@ function hasShopifyTag(c: Customer): boolean {
   return (c.tags ?? []).some((t) => t.toLowerCase() === 'shopify') || Boolean(c.shopifyCustomerId)
 }
 
+function isAssigned(c: Customer): boolean {
+  return Boolean(c.assignedTo?.trim())
+}
+
+/** Assigned first, then organic, Shopify-tagged last. */
+function customerPriority(a: Customer, b: Customer): number {
+  const rank = (c: Customer) => {
+    if (isAssigned(c)) return 0
+    if (hasShopifyTag(c)) return 2
+    return 1
+  }
+  return rank(a) - rank(b)
+}
+
+type QuickFilter = 'all' | 'assigned' | 'unassigned' | 'shopify' | `user:${string}`
+
+function isUserFilter(f: QuickFilter): f is `user:${string}` {
+  return f.startsWith('user:')
+}
+
+function userFromFilter(f: `user:${string}`): string {
+  return f.slice('user:'.length)
+}
+
 export default function Customers() {
   const { customers, loading } = useCustomers()
   const navigate = useNavigate()
@@ -20,6 +44,7 @@ export default function Customers() {
   const [phone, setPhone] = useState('')
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
 
   const handleAdd = async () => {
     const phoneNorm = normalizePhoneForStorage(phone)
@@ -135,11 +160,44 @@ export default function Customers() {
     [],
   )
 
-  const shopifyLast = (a: Customer, b: Customer) => {
-    const as = hasShopifyTag(a) ? 1 : 0
-    const bs = hasShopifyTag(b) ? 1 : 0
-    return as - bs
-  }
+  const assigneeChips = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const c of customers) {
+      const a = c.assignedTo?.trim()
+      if (!a) continue
+      counts.set(a, (counts.get(a) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+      .map(([user, count]) => ({ user, count, id: `user:${user}` as const }))
+  }, [customers])
+
+  const visibleCustomers = useMemo(() => {
+    if (isUserFilter(quickFilter)) {
+      const user = userFromFilter(quickFilter)
+      return customers.filter((c) => c.assignedTo?.trim() === user)
+    }
+    switch (quickFilter) {
+      case 'assigned':
+        return customers.filter(isAssigned)
+      case 'unassigned':
+        return customers.filter((c) => !isAssigned(c))
+      case 'shopify':
+        return customers.filter(hasShopifyTag)
+      default:
+        return customers
+    }
+  }, [customers, quickFilter])
+
+  const assignedCount = useMemo(() => customers.filter(isAssigned).length, [customers])
+  const shopifyCount = useMemo(() => customers.filter(hasShopifyTag).length, [customers])
+
+  const chipClass = (active: boolean) =>
+    `px-2.5 py-1.5 rounded-lg text-sm border transition-colors ${
+      active
+        ? 'border-green-600 bg-green-50 text-green-700 font-medium'
+        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+    }`
 
   return (
     <div className="p-4 sm:p-6 max-w-full">
@@ -168,7 +226,7 @@ export default function Customers() {
       </div>
 
       <DataTable
-        data={customers}
+        data={visibleCustomers}
         columns={columns}
         getRowId={(c) => c.id}
         loading={loading}
@@ -185,11 +243,55 @@ export default function Customers() {
           )
         }}
         defaultSort={{ id: 'createdAt', dir: 'desc' }}
-        secondaryCompare={shopifyLast}
-        defaultPageSize={25}
+        secondaryCompare={customerPriority}
+        defaultPageSize={10}
         pageSizeOptions={[10, 25, 50, 100]}
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
-        emptyMessage="No customers yet. Add one manually or wait for WhatsApp messages."
+        emptyMessage="No customers match this filter."
+        filterBar={
+          <div className="flex flex-col gap-2 text-xs text-gray-500 w-full sm:w-auto">
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-gray-600">Quick filter</span>
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    { id: 'all' as const, label: `All (${customers.length})` },
+                    { id: 'assigned' as const, label: `Assigned (${assignedCount})` },
+                    { id: 'unassigned' as const, label: `Unassigned (${customers.length - assignedCount})` },
+                    { id: 'shopify' as const, label: `Shopify (${shopifyCount})` },
+                  ] as const
+                ).map((chip) => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => setQuickFilter(chip.id)}
+                    className={chipClass(quickFilter === chip.id)}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {assigneeChips.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="font-medium text-gray-600">Assigned user</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {assigneeChips.map((chip) => (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => setQuickFilter(chip.id)}
+                      className={chipClass(quickFilter === chip.id)}
+                      title={chip.user}
+                    >
+                      {chip.user} ({chip.count})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        }
       />
 
       {showAdd && (
