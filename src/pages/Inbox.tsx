@@ -12,6 +12,8 @@ import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
 import type { Conversation, Message } from '../types'
 
+type AssigneeFilter = 'all' | 'me' | 'other'
+
 function smartTimestamp(iso: string): string {
   const date = new Date(iso)
   const now = new Date()
@@ -35,6 +37,7 @@ export default function Inbox() {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [search, setSearch] = useState('')
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>('all')
   const [optimistic, setOptimistic] = useState<Message[]>([])
   const [clearConfirm, setClearConfirm] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -111,7 +114,22 @@ export default function Inbox() {
   const customerAssignee = (c: Conversation) =>
     customers.find((cu) => cu.id === c.customerId)?.assignedTo?.trim() || null
 
+  const matchesAssigneeFilter = (c: Conversation, filter: AssigneeFilter) => {
+    if (filter === 'all') return true
+    const assignee = customerAssignee(c)
+    if (filter === 'me') return Boolean(meLabel) && assignee === meLabel
+    // other: not assigned to me (unassigned or someone else)
+    return !meLabel || assignee !== meLabel
+  }
+
+  const filterCounts = {
+    all: conversations.length,
+    me: conversations.filter((c) => matchesAssigneeFilter(c, 'me')).length,
+    other: conversations.filter((c) => matchesAssigneeFilter(c, 'other')).length,
+  }
+
   const filtered = conversations.filter((c) => {
+    if (!matchesAssigneeFilter(c, assigneeFilter)) return false
     if (!search) return true
     const q = search.toLowerCase()
     const name = customerName(c).toLowerCase()
@@ -119,6 +137,13 @@ export default function Inbox() {
     const assignee = customerAssignee(c)?.toLowerCase() ?? ''
     return name.includes(q) || phone.includes(q) || assignee.includes(q)
   })
+
+  const selectedVisible = !selected || filtered.some((c) => c.id === selected)
+
+  // Drop selection when the open chat no longer matches the active filters
+  useEffect(() => {
+    if (selected && !selectedVisible) setSelected(null)
+  }, [selected, selectedVisible])
 
   const allMessages = [
     ...messages,
@@ -273,6 +298,16 @@ export default function Inbox() {
       <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0 min-h-0`}>
         <div className="p-4 border-b border-gray-200 space-y-2">
           <h2 className="font-semibold text-gray-800">Inbox</h2>
+          <select
+            value={assigneeFilter}
+            onChange={(e) => setAssigneeFilter(e.target.value as AssigneeFilter)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500 bg-gray-50"
+            aria-label="Filter by assignee"
+          >
+            <option value="all">All ({filterCounts.all})</option>
+            <option value="me">Assigned to me ({filterCounts.me})</option>
+            <option value="other">Other ({filterCounts.other})</option>
+          </select>
           <input
             type="text"
             value={search}
@@ -285,7 +320,7 @@ export default function Inbox() {
           {loading && <p className="text-sm text-gray-400 p-4">Loading…</p>}
           {!loading && filtered.length === 0 && (
             <p className="text-sm text-gray-400 p-4">
-              {search ? 'No matches.' : 'No conversations yet.'}
+              {search || assigneeFilter !== 'all' ? 'No matches.' : 'No conversations yet.'}
             </p>
           )}
           {filtered.map((c) => {
