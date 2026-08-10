@@ -108,12 +108,16 @@ export default function Inbox() {
   const customerName = (c: Conversation) =>
     customers.find((cu) => cu.id === c.customerId)?.name ?? c.customerId
 
+  const customerAssignee = (c: Conversation) =>
+    customers.find((cu) => cu.id === c.customerId)?.assignedTo?.trim() || null
+
   const filtered = conversations.filter((c) => {
     if (!search) return true
     const q = search.toLowerCase()
     const name = customerName(c).toLowerCase()
     const phone = customers.find((cu) => cu.id === c.customerId)?.phone ?? ''
-    return name.includes(q) || phone.includes(q)
+    const assignee = customerAssignee(c)?.toLowerCase() ?? ''
+    return name.includes(q) || phone.includes(q) || assignee.includes(q)
   })
 
   const allMessages = [
@@ -262,6 +266,7 @@ export default function Inbox() {
   }
 
   const phoneDisplay = selectedCustomer ? formatPhoneDisplay(selectedCustomer.phone) : ''
+  const assignedBadge = selectedCustomer?.assignedTo?.trim() || null
 
   return (
     <div className="flex h-full min-h-0 min-w-0">
@@ -283,32 +288,40 @@ export default function Inbox() {
               {search ? 'No matches.' : 'No conversations yet.'}
             </p>
           )}
-          {filtered.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setSelected(c.id)}
-              className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
-                selected === c.id ? 'bg-green-50' : ''
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-sm text-gray-800 truncate">
-                  {customerName(c)}
-                </span>
-                <span className="text-xs text-gray-400 flex-shrink-0">
-                  {c.updatedAt ? smartTimestamp(c.updatedAt) : ''}
-                </span>
-              </div>
-              <div className="flex items-center justify-between mt-1 gap-2">
-                <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
-                {c.unreadCount > 0 && (
-                  <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
-                    {c.unreadCount}
+          {filtered.map((c) => {
+            const assignee = customerAssignee(c)
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelected(c.id)}
+                className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                  selected === c.id ? 'bg-green-50' : ''
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm text-gray-800 truncate">
+                    {customerName(c)}
+                  </span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">
+                    {c.updatedAt ? smartTimestamp(c.updatedAt) : ''}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between mt-1 gap-2">
+                  <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
+                  {c.unreadCount > 0 && (
+                    <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
+                      {c.unreadCount}
+                    </span>
+                  )}
+                </div>
+                {assignee && (
+                  <span className="mt-1.5 inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
+                    {assignee}
                   </span>
                 )}
-              </div>
-            </button>
-          ))}
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -329,7 +342,17 @@ export default function Inbox() {
                 {customerName(conv)[0]?.toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
+                  {assignedBadge && (
+                    <span
+                      className="flex-shrink-0 bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate max-w-[10rem]"
+                      title={`Assigned to ${assignedBadge}`}
+                    >
+                      {assignedBadge}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-500">
                   <span className="truncate">{phoneDisplay || '—'}</span>
                   {phoneDisplay && (
