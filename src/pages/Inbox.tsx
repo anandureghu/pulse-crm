@@ -342,17 +342,15 @@ export default function Inbox() {
                 {customerName(conv)[0]?.toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 min-w-0">
-                  <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
-                  {assignedBadge && (
-                    <span
-                      className="flex-shrink-0 bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate max-w-[10rem]"
-                      title={`Assigned to ${assignedBadge}`}
-                    >
-                      {assignedBadge}
-                    </span>
-                  )}
-                </div>
+                <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
+                {assignedBadge && (
+                  <span
+                    className="mt-0.5 inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate"
+                    title={`Assigned to ${assignedBadge}`}
+                  >
+                    {assignedBadge}
+                  </span>
+                )}
                 <div className="flex items-center gap-1.5 text-xs text-gray-500">
                   <span className="truncate">{phoneDisplay || '—'}</span>
                   {phoneDisplay && (
