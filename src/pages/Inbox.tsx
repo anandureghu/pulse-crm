@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useConversations, useMessages } from '../hooks/useConversations'
 import { useCustomers } from '../hooks/useCustomers'
+import { useEnquiries } from '../hooks/useEnquiries'
 import { useUsers } from '../hooks/useUsers'
 import { useAuthStore } from '../store/authStore'
 import { sendMessageFn, assignEnquiryFn } from '../lib/functions'
@@ -10,9 +11,34 @@ import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
-import type { Conversation, Message } from '../types'
+import type { Conversation, EnquiryStatus, Message } from '../types'
 
 type AssigneeFilter = 'all' | 'me' | 'other'
+
+function statusLabel(status: string): string {
+  return status.replace(/_/g, ' ')
+}
+
+function statusColor(status: string): string {
+  const map: Record<string, string> = {
+    new_lead: 'bg-gray-100 text-gray-600',
+    assigned: 'bg-blue-100 text-blue-700',
+    contact_attempted: 'bg-sky-100 text-sky-700',
+    interested: 'bg-yellow-100 text-yellow-700',
+    follow_up_required: 'bg-orange-100 text-orange-700',
+    negotiation: 'bg-purple-100 text-purple-700',
+    ready_to_buy: 'bg-teal-100 text-teal-700',
+    payment_pending: 'bg-amber-100 text-amber-700',
+    sale_completed: 'bg-green-100 text-green-700',
+    after_sales: 'bg-emerald-100 text-emerald-700',
+    repeat_customer: 'bg-green-100 text-green-700',
+    not_interested: 'bg-red-100 text-red-600',
+    lost: 'bg-red-100 text-red-600',
+    spam: 'bg-red-100 text-red-600',
+    duplicate: 'bg-red-100 text-red-600',
+  }
+  return map[status] ?? 'bg-gray-100 text-gray-600'
+}
 
 function smartTimestamp(iso: string): string {
   const date = new Date(iso)
@@ -29,6 +55,7 @@ function smartTimestamp(iso: string): string {
 export default function Inbox() {
   const { conversations, loading } = useConversations()
   const { customers } = useCustomers()
+  const { enquiries } = useEnquiries()
   const users = useUsers()
   const authUser = useAuthStore((s) => s.user)
   const navigate = useNavigate()
@@ -108,11 +135,23 @@ export default function Inbox() {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [actionsOpen])
 
+  // Latest enquiry status per customer (enquiries are ordered newest-first)
+  const statusByCustomer = (() => {
+    const map = new Map<string, EnquiryStatus>()
+    for (const e of enquiries) {
+      if (!map.has(e.customerId)) map.set(e.customerId, e.status)
+    }
+    return map
+  })()
+
   const customerName = (c: Conversation) =>
     customers.find((cu) => cu.id === c.customerId)?.name ?? c.customerId
 
   const customerAssignee = (c: Conversation) =>
     customers.find((cu) => cu.id === c.customerId)?.assignedTo?.trim() || null
+
+  const customerStatus = (c: Conversation) =>
+    statusByCustomer.get(c.customerId) ?? null
 
   const matchesAssigneeFilter = (c: Conversation, filter: AssigneeFilter) => {
     if (filter === 'all') return true
@@ -135,7 +174,8 @@ export default function Inbox() {
     const name = customerName(c).toLowerCase()
     const phone = customers.find((cu) => cu.id === c.customerId)?.phone ?? ''
     const assignee = customerAssignee(c)?.toLowerCase() ?? ''
-    return name.includes(q) || phone.includes(q) || assignee.includes(q)
+    const status = customerStatus(c)?.replace(/_/g, ' ') ?? ''
+    return name.includes(q) || phone.includes(q) || assignee.includes(q) || status.includes(q)
   })
 
   const selectedVisible = !selected || filtered.some((c) => c.id === selected)
@@ -292,6 +332,9 @@ export default function Inbox() {
 
   const phoneDisplay = selectedCustomer ? formatPhoneDisplay(selectedCustomer.phone) : ''
   const assignedBadge = selectedCustomer?.assignedTo?.trim() || null
+  const statusBadge = selectedCustomer
+    ? statusByCustomer.get(selectedCustomer.id) ?? null
+    : null
 
   return (
     <div className="flex h-full min-h-0 min-w-0">
@@ -325,6 +368,7 @@ export default function Inbox() {
           )}
           {filtered.map((c) => {
             const assignee = customerAssignee(c)
+            const status = customerStatus(c)
             return (
               <button
                 key={c.id}
@@ -349,10 +393,22 @@ export default function Inbox() {
                     </span>
                   )}
                 </div>
-                {assignee && (
-                  <span className="mt-1.5 inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
-                    {assignee}
-                  </span>
+                {(assignee || status) && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {status && (
+                      <span
+                        className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
+                        title={`Status: ${statusLabel(status)}`}
+                      >
+                        {statusLabel(status)}
+                      </span>
+                    )}
+                    {assignee && (
+                      <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
+                        {assignee}
+                      </span>
+                    )}
+                  </div>
                 )}
               </button>
             )
@@ -378,13 +434,25 @@ export default function Inbox() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
-                {assignedBadge && (
-                  <span
-                    className="mt-0.5 inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate"
-                    title={`Assigned to ${assignedBadge}`}
-                  >
-                    {assignedBadge}
-                  </span>
+                {(statusBadge || assignedBadge) && (
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {statusBadge && (
+                      <span
+                        className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(statusBadge)}`}
+                        title={`Status: ${statusLabel(statusBadge)}`}
+                      >
+                        {statusLabel(statusBadge)}
+                      </span>
+                    )}
+                    {assignedBadge && (
+                      <span
+                        className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate"
+                        title={`Assigned to ${assignedBadge}`}
+                      >
+                        {assignedBadge}
+                      </span>
+                    )}
+                  </div>
                 )}
                 <div className="flex items-center gap-1.5 text-xs text-gray-500">
                   <span className="truncate">{phoneDisplay || '—'}</span>
