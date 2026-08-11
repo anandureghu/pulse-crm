@@ -7,6 +7,8 @@ import {
   findShopifyCustomer,
   mergeCustomerFromShopify,
   toShopifyMailingAddress,
+  normalizeDiscount,
+  orderTotalAfterDiscount,
   type OrderDto,
 } from '../_shared/shopify.ts'
 import { ensureProvince } from '../_shared/address.ts'
@@ -151,6 +153,10 @@ Deno.serve(async (req) => {
       .filter(Boolean)
     const tagsStr = tags.join(', ')
     const isCod = tags.some((t) => t.toUpperCase() === 'COD') || dto.financialStatus === 'pending'
+    const discount = normalizeDiscount(dto.discount)
+    dto = { ...dto, discount }
+    const payable = orderTotalAfterDiscount(dto)
+    dto = { ...dto, amount: payable }
 
     const phoneE164 = phoneDigits.length === 10 ? `+91${phoneDigits}` : `+${phoneDigits}`
     // Distinct objects; Shopify requires non-empty first_name + last_name or it drops both addresses
@@ -173,6 +179,16 @@ Deno.serve(async (req) => {
     if (tagsStr) order.tags = tagsStr
     if (dto.note?.trim()) order.note = dto.note.trim()
 
+    if (discount) {
+      order.discount_codes = [
+        {
+          code: (discount.code || 'DISCOUNT').slice(0, 255),
+          amount: String(discount.amount),
+          type: discount.type,
+        },
+      ]
+    }
+
     const orderPayload: Record<string, unknown> = { order }
 
     if (dto.shippingLines?.length) {
@@ -188,7 +204,7 @@ Deno.serve(async (req) => {
         {
           kind: 'sale',
           status: 'pending',
-          amount: String(dto.amount),
+          amount: String(payable),
           gateway: 'Cash on Delivery (COD)',
         },
       ]

@@ -7,6 +7,9 @@ import {
   loadShopifyConfig,
   findShopifyCustomer,
   mergeCustomerFromShopify,
+  normalizeDiscount,
+  orderSubtotal,
+  orderTotalAfterDiscount,
 } from '../_shared/shopify.ts'
 import { ensureProvince } from '../_shared/address.ts'
 
@@ -30,6 +33,7 @@ Return ONLY valid JSON matching this schema (no markdown):
     { "amount": number, "quantity": number, "hint": string | null }
   ],
   "amount": number,
+  "discount": { "amount": number, "type": "fixed_amount" | "percentage", "code": string | null } | null,
   "tags": string[],
   "note": string | null,
   "financialStatus": "pending" | "paid",
@@ -48,9 +52,18 @@ Return ONLY valid JSON matching this schema (no markdown):
 - email: only if present; else null.
 
 ## Line items (multi-product)
-- lineItems: one entry per product. amount = unit price; quantity >= 1; hint = product name if mentioned.
+- lineItems: one entry per product. amount = CATALOG / list unit price (before discount); quantity >= 1; hint = product name if mentioned.
 - Support multiple products in one prompt.
-- amount (top-level) = order total (sum of line.amount × quantity, plus shipping if any).
+- NEVER reduce line item prices to reflect a discount — keep original product prices so variants can be matched by price.
+
+## Discount (important)
+- If the prompt mentions a discount / offer / off / coupon / "less" / "disc" (e.g. "100 off", "10% discount", "discount 50", "₹200 less"):
+  set discount = { amount, type, code }.
+  - Rupee / flat off → type "fixed_amount" (amount = rupees off).
+  - Percent off → type "percentage" (amount = percent, e.g. 10 for 10%).
+  - code: coupon code if given, else a short label like "DISCOUNT", else null.
+- If no discount is mentioned, set discount to null.
+- amount (top-level) = FINAL payable total AFTER discount (lines + shipping − discount).
 
 ## Payment / tags / notes
 - tags: COD, PREPAID, etc. (uppercase).
@@ -160,12 +173,14 @@ Deno.serve(async (req) => {
       return err('No line items / amount found in prompt', 400)
     }
 
-    const computedTotal = parsed.lineItems.reduce((s, li) => s + li.amount * li.quantity, 0)
-    const shippingTotal = (parsed.shippingLines ?? []).reduce((s, l) => s + (parseFloat(l.price) || 0), 0)
+    parsed.discount = normalizeDiscount(parsed.discount)
+    const subtotal = orderSubtotal(parsed)
+    const afterDiscount = orderTotalAfterDiscount(parsed)
     const parsedAmount = Number(parsed.amount)
-    parsed.amount = !Number.isNaN(parsedAmount) && parsedAmount > 0
-      ? parsedAmount
-      : computedTotal + shippingTotal
+    // Prefer computed total after discount so line prices stay at catalog amounts
+    parsed.amount = afterDiscount > 0
+      ? afterDiscount
+      : (!Number.isNaN(parsedAmount) && parsedAmount > 0 ? parsedAmount : subtotal)
 
     // Returning customer: fill missing name/address from Shopify
     let customerSource: 'prompt' | 'shopify' | 'new' = 'prompt'

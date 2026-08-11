@@ -38,6 +38,12 @@ interface OrderLineItemDto {
   hint?: string | null
 }
 
+interface OrderDiscountDto {
+  amount: number
+  type: 'fixed_amount' | 'percentage'
+  code?: string | null
+}
+
 interface OrderDto {
   customer: OrderCustomerDto
   lineItems: OrderLineItemDto[]
@@ -47,6 +53,23 @@ interface OrderDto {
   note?: string | null
   financialStatus?: 'pending' | 'paid'
   shippingLines?: { title: string; price: string }[] | null
+  discount?: OrderDiscountDto | null
+}
+
+function lineSubtotal(lines: OrderLineItemDto[]): number {
+  return lines.reduce((s, li) => s + li.amount * li.quantity, 0)
+}
+
+function discountOff(subtotal: number, discount?: OrderDiscountDto | null): number {
+  if (!discount || !(discount.amount > 0) || subtotal <= 0) return 0
+  if (discount.type === 'percentage') return Math.min(subtotal, (subtotal * discount.amount) / 100)
+  return Math.min(subtotal, discount.amount)
+}
+
+function payableTotal(dto: OrderDto): number {
+  const shipping = (dto.shippingLines ?? []).reduce((s, l) => s + (parseFloat(l.price) || 0), 0)
+  const sub = lineSubtotal(dto.lineItems?.length ? dto.lineItems : [{ amount: dto.amount, quantity: 1, hint: null }]) + shipping
+  return Math.max(0, Math.round((sub - discountOff(sub, dto.discount)) * 100) / 100)
 }
 
 interface ShopifyOrderRow {
@@ -256,7 +279,15 @@ export default function Orders() {
         lineItems: res.dto.lineItems?.length
           ? res.dto.lineItems
           : [{ amount: res.dto.amount, quantity: res.dto.quantity || 1, hint: null }],
+        discount: res.dto.discount?.amount && res.dto.discount.amount > 0
+          ? {
+              amount: Number(res.dto.discount.amount),
+              type: res.dto.discount.type === 'percentage' ? 'percentage' : 'fixed_amount',
+              code: res.dto.discount.code ?? null,
+            }
+          : null,
       }
+      normalized.amount = payableTotal(normalized)
       setDto(normalized)
       setTagsInput((normalized.tags ?? []).join(', '))
       setSelectedByLine([])
@@ -283,8 +314,25 @@ export default function Orders() {
       if (!d) return d
       const lines = [...(d.lineItems?.length ? d.lineItems : [{ amount: d.amount, quantity: 1, hint: null }])]
       lines[index] = { ...lines[index], ...patch }
-      const total = lines.reduce((s, li) => s + li.amount * li.quantity, 0)
-      return { ...d, lineItems: lines, amount: total }
+      const next = { ...d, lineItems: lines }
+      return { ...next, amount: payableTotal(next) }
+    })
+  }
+
+  const updateDiscount = (patch: Partial<OrderDiscountDto> | null) => {
+    setDto((d) => {
+      if (!d) return d
+      if (patch === null) {
+        const next = { ...d, discount: null }
+        return { ...next, amount: payableTotal(next) }
+      }
+      const current = d.discount ?? { amount: 0, type: 'fixed_amount' as const, code: 'DISCOUNT' }
+      const discount = { ...current, ...patch }
+      const next = {
+        ...d,
+        discount: discount.amount > 0 ? discount : null,
+      }
+      return { ...next, amount: payableTotal(next) }
     })
   }
 
@@ -508,14 +556,72 @@ export default function Orders() {
                 <Field label="PIN / zip" value={dto.customer.zip} onChange={(v) => updateCustomer('zip', v)} />
                 <Field label="Country" value={dto.customer.country} onChange={(v) => updateCustomer('country', v)} />
                 <div>
-                  <label className="block text-sm text-gray-600 mb-1">Order total</label>
+                  <label className="block text-sm text-gray-600 mb-1">Order total (after discount)</label>
                   <input
                     type="number"
                     step="0.01"
                     value={dto.amount}
-                    onChange={(e) => setDto({ ...dto, amount: parseFloat(e.target.value) || 0 })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    readOnly
+                    className="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-700"
                   />
+                </div>
+                <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-dashed border-gray-200 p-3">
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Discount</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={dto.discount?.amount ?? ''}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const n = parseFloat(e.target.value)
+                        if (!e.target.value.trim() || Number.isNaN(n) || n <= 0) {
+                          updateDiscount(null)
+                          return
+                        }
+                        updateDiscount({ amount: n })
+                      }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Discount type</label>
+                    <select
+                      value={dto.discount?.type ?? 'fixed_amount'}
+                      onChange={(e) =>
+                        updateDiscount({
+                          amount: dto.discount?.amount ?? 0,
+                          type: e.target.value as 'fixed_amount' | 'percentage',
+                        })
+                      }
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      <option value="fixed_amount">Fixed (₹)</option>
+                      <option value="percentage">Percentage (%)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Discount code / label</label>
+                    <input
+                      type="text"
+                      value={dto.discount?.code ?? ''}
+                      placeholder="DISCOUNT"
+                      onChange={(e) =>
+                        updateDiscount({
+                          amount: dto.discount?.amount ?? 0,
+                          code: e.target.value.trim() || null,
+                        })
+                      }
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  {dto.discount && dto.discount.amount > 0 && (
+                    <p className="sm:col-span-3 text-xs text-gray-500">
+                      Subtotal ₹{lineSubtotal(lineItems).toFixed(2)} − discount ₹
+                      {discountOff(lineSubtotal(lineItems), dto.discount).toFixed(2)} = ₹{dto.amount.toFixed(2)}
+                    </p>
+                  )}
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-600 mb-1">Tags (comma-separated)</label>
