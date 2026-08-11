@@ -45,11 +45,20 @@ export interface OrderLineItemDto {
   hint?: string | null
 }
 
+/** Order-level discount applied when creating the Shopify order. */
+export interface OrderDiscountDto {
+  /** Fixed rupees off, or percentage value (e.g. 10 for 10%). */
+  amount: number
+  type: 'fixed_amount' | 'percentage'
+  /** Shown as the discount code label in Shopify (optional). */
+  code?: string | null
+}
+
 export interface OrderDto {
   customer: OrderCustomerDto
   /** Product lines — one or more. Prefer this over legacy quantity. */
   lineItems: OrderLineItemDto[]
-  /** Order total (sum of line amounts × qty, plus shipping if any). */
+  /** Order total after discount (sum of lines + shipping − discount). */
   amount: number
   /** @deprecated use lineItems[0].quantity — kept for older clients */
   quantity?: number
@@ -57,6 +66,41 @@ export interface OrderDto {
   note?: string | null
   financialStatus?: 'pending' | 'paid'
   shippingLines?: { title: string; price: string }[] | null
+  /** Optional order-level discount (do not bake into line item prices). */
+  discount?: OrderDiscountDto | null
+}
+
+export function normalizeDiscount(raw: unknown): OrderDiscountDto | null {
+  if (!raw || typeof raw !== 'object') return null
+  const d = raw as Record<string, unknown>
+  const amount = Number(d.amount)
+  if (Number.isNaN(amount) || amount <= 0) return null
+  const typeRaw = String(d.type ?? 'fixed_amount').toLowerCase()
+  const type: OrderDiscountDto['type'] =
+    typeRaw === 'percentage' || typeRaw === 'percent' ? 'percentage' : 'fixed_amount'
+  const code = typeof d.code === 'string' && d.code.trim() ? d.code.trim() : null
+  return { amount, type, code }
+}
+
+/** Line subtotal + shipping, before discount. */
+export function orderSubtotal(dto: Pick<OrderDto, 'lineItems' | 'shippingLines'>): number {
+  const lines = (dto.lineItems ?? []).reduce((s, li) => s + Number(li.amount) * Math.max(1, Number(li.quantity) || 1), 0)
+  const shipping = (dto.shippingLines ?? []).reduce((s, l) => s + (parseFloat(String(l.price)) || 0), 0)
+  return lines + shipping
+}
+
+/** Rupees discounted from subtotal. */
+export function discountRupees(subtotal: number, discount?: OrderDiscountDto | null): number {
+  if (!discount || !(discount.amount > 0) || subtotal <= 0) return 0
+  if (discount.type === 'percentage') {
+    return Math.min(subtotal, (subtotal * discount.amount) / 100)
+  }
+  return Math.min(subtotal, discount.amount)
+}
+
+export function orderTotalAfterDiscount(dto: Pick<OrderDto, 'lineItems' | 'shippingLines' | 'discount'>): number {
+  const sub = orderSubtotal(dto)
+  return Math.max(0, Math.round((sub - discountRupees(sub, dto.discount)) * 100) / 100)
 }
 
 type TokenCache = { shop: string; token: string; expiresAt: number }

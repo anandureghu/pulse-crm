@@ -38,6 +38,12 @@ interface OrderLineItemDto {
   hint?: string | null
 }
 
+interface OrderDiscountDto {
+  amount: number
+  type: 'fixed_amount' | 'percentage'
+  code?: string | null
+}
+
 interface OrderDto {
   customer: OrderCustomerDto
   lineItems: OrderLineItemDto[]
@@ -47,6 +53,23 @@ interface OrderDto {
   note?: string | null
   financialStatus?: 'pending' | 'paid'
   shippingLines?: { title: string; price: string }[] | null
+  discount?: OrderDiscountDto | null
+}
+
+function lineSubtotal(lines: OrderLineItemDto[]): number {
+  return lines.reduce((s, li) => s + li.amount * li.quantity, 0)
+}
+
+function discountOff(subtotal: number, discount?: OrderDiscountDto | null): number {
+  if (!discount || !(discount.amount > 0) || subtotal <= 0) return 0
+  if (discount.type === 'percentage') return Math.min(subtotal, (subtotal * discount.amount) / 100)
+  return Math.min(subtotal, discount.amount)
+}
+
+function payableTotal(dto: OrderDto): number {
+  const shipping = (dto.shippingLines ?? []).reduce((s, l) => s + (parseFloat(l.price) || 0), 0)
+  const sub = lineSubtotal(dto.lineItems?.length ? dto.lineItems : [{ amount: dto.amount, quantity: 1, hint: null }]) + shipping
+  return Math.max(0, Math.round((sub - discountOff(sub, dto.discount)) * 100) / 100)
 }
 
 interface ShopifyOrderRow {
@@ -123,6 +146,14 @@ export default function Orders() {
   const [formKey, setFormKey] = useState(0)
   const [syncingOrders, setSyncingOrders] = useState(false)
   const [syncingCustomers, setSyncingCustomers] = useState(false)
+  const [editing, setEditing] = useState<ShopifyOrderRow | null>(null)
+  const [editTags, setEditTags] = useState('')
+  const [editEmail, setEditEmail] = useState('')
+  const [editCustomerName, setEditCustomerName] = useState('')
+  const [editPhone, setEditPhone] = useState('')
+  const [editNote, setEditNote] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const resetCreateForm = () => {
     setPrompt('')
@@ -137,14 +168,23 @@ export default function Orders() {
     if (data?.value) setCache(data.value as unknown as ShopifyProductsCache)
   }, [])
 
+  /** Only list orders that exist in Shopify (synced mirror). */
   const loadRecent = useCallback(async () => {
     const { data } = await supabase
       .from('shopify_orders')
       .select('id, shopify_order_id, shopify_order_name, customer_name, phone, email, amount, tags, status, error, created_at')
+      .not('shopify_order_id', 'is', null)
+      .eq('status', 'created')
       .order('created_at', { ascending: false })
       .limit(100)
     setRecent((data as ShopifyOrderRow[]) ?? [])
   }, [])
+
+  const resyncOrders = useCallback(async () => {
+    const res = await invokeFunction<{ synced: number; removed?: number }>('sync-shopify-orders', {})
+    await loadRecent()
+    return res
+  }, [loadRecent])
 
   useEffect(() => {
     loadCache()
@@ -239,7 +279,15 @@ export default function Orders() {
         lineItems: res.dto.lineItems?.length
           ? res.dto.lineItems
           : [{ amount: res.dto.amount, quantity: res.dto.quantity || 1, hint: null }],
+        discount: res.dto.discount?.amount && res.dto.discount.amount > 0
+          ? {
+              amount: Number(res.dto.discount.amount),
+              type: res.dto.discount.type === 'percentage' ? 'percentage' : 'fixed_amount',
+              code: res.dto.discount.code ?? null,
+            }
+          : null,
       }
+      normalized.amount = payableTotal(normalized)
       setDto(normalized)
       setTagsInput((normalized.tags ?? []).join(', '))
       setSelectedByLine([])
@@ -266,8 +314,25 @@ export default function Orders() {
       if (!d) return d
       const lines = [...(d.lineItems?.length ? d.lineItems : [{ amount: d.amount, quantity: 1, hint: null }])]
       lines[index] = { ...lines[index], ...patch }
-      const total = lines.reduce((s, li) => s + li.amount * li.quantity, 0)
-      return { ...d, lineItems: lines, amount: total }
+      const next = { ...d, lineItems: lines }
+      return { ...next, amount: payableTotal(next) }
+    })
+  }
+
+  const updateDiscount = (patch: Partial<OrderDiscountDto> | null) => {
+    setDto((d) => {
+      if (!d) return d
+      if (patch === null) {
+        const next = { ...d, discount: null }
+        return { ...next, amount: payableTotal(next) }
+      }
+      const current = d.discount ?? { amount: 0, type: 'fixed_amount' as const, code: 'DISCOUNT' }
+      const discount = { ...current, ...patch }
+      const next = {
+        ...d,
+        discount: discount.amount > 0 ? discount : null,
+      }
+      return { ...next, amount: payableTotal(next) }
     })
   }
 
@@ -302,16 +367,72 @@ export default function Orders() {
         })),
         prompt,
       })
-      toast(`Order ${res.orderName} created`, 'success')
+      toast(`Order ${res.orderName} created — syncing from Shopify…`, 'success')
       resetCreateForm()
-      await loadRecent()
       setTab('orders')
+      setSyncingOrders(true)
+      try {
+        const syncRes = await resyncOrders()
+        toast(`Synced ${syncRes.synced} orders from Shopify`, 'success')
+      } catch (syncErr) {
+        toast((syncErr as Error).message, 'error')
+        await loadRecent()
+      } finally {
+        setSyncingOrders(false)
+      }
       if (res.adminUrl) window.open(res.adminUrl, '_blank', 'noopener,noreferrer')
     } catch (e) {
       toast((e as Error).message, 'error')
-      await loadRecent()
     } finally {
       setCreating(false)
+    }
+  }
+
+  const openEdit = (row: ShopifyOrderRow) => {
+    setEditing(row)
+    setEditTags((row.tags ?? []).join(', '))
+    setEditEmail(row.email ?? '')
+    setEditCustomerName(row.customer_name ?? '')
+    setEditPhone(row.phone ?? '')
+    setEditNote('')
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editing) return
+    setSavingEdit(true)
+    try {
+      const payload: Record<string, unknown> = {
+        id: editing.id,
+        tags: editTags.split(',').map((t) => t.trim()).filter(Boolean),
+        email: editEmail.trim() || null,
+        customerName: editCustomerName.trim() || null,
+        phone: editPhone.trim() || null,
+      }
+      if (editNote.trim()) payload.note = editNote.trim()
+      await invokeFunction('update-shopify-order', payload)
+      toast('Order updated', 'success')
+      setEditing(null)
+      await loadRecent()
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  const handleDelete = async (row: ShopifyOrderRow) => {
+    const label = row.shopify_order_name || row.shopify_order_id || 'this order'
+    if (!window.confirm(`Cancel and remove ${label} from the CRM list?`)) return
+    setDeletingId(row.id)
+    try {
+      await invokeFunction('delete-shopify-order', { id: row.id })
+      toast(`Removed ${label}`, 'success')
+      if (editing?.id === row.id) setEditing(null)
+      await loadRecent()
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -321,7 +442,7 @@ export default function Orders() {
         <div>
           <h2 className="text-xl font-semibold text-gray-800">Orders</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            Create Shopify orders from a prompt, browse synced products, and review order history.
+            Create Shopify orders from a prompt, browse synced products, and manage orders synced from Shopify.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -351,9 +472,8 @@ export default function Orders() {
             onClick={async () => {
               setSyncingOrders(true)
               try {
-                const res = await invokeFunction<{ synced: number }>('sync-shopify-orders', {})
+                const res = await resyncOrders()
                 toast(`Synced ${res.synced} orders`, 'success')
-                await loadRecent()
               } catch (e) {
                 toast((e as Error).message, 'error')
               } finally {
@@ -436,14 +556,72 @@ export default function Orders() {
                 <Field label="PIN / zip" value={dto.customer.zip} onChange={(v) => updateCustomer('zip', v)} />
                 <Field label="Country" value={dto.customer.country} onChange={(v) => updateCustomer('country', v)} />
                 <div>
-                  <label className="block text-sm text-gray-600 mb-1">Order total</label>
+                  <label className="block text-sm text-gray-600 mb-1">Order total (after discount)</label>
                   <input
                     type="number"
                     step="0.01"
                     value={dto.amount}
-                    onChange={(e) => setDto({ ...dto, amount: parseFloat(e.target.value) || 0 })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    readOnly
+                    className="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-700"
                   />
+                </div>
+                <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-dashed border-gray-200 p-3">
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Discount</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={dto.discount?.amount ?? ''}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const n = parseFloat(e.target.value)
+                        if (!e.target.value.trim() || Number.isNaN(n) || n <= 0) {
+                          updateDiscount(null)
+                          return
+                        }
+                        updateDiscount({ amount: n })
+                      }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Discount type</label>
+                    <select
+                      value={dto.discount?.type ?? 'fixed_amount'}
+                      onChange={(e) =>
+                        updateDiscount({
+                          amount: dto.discount?.amount ?? 0,
+                          type: e.target.value as 'fixed_amount' | 'percentage',
+                        })
+                      }
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      <option value="fixed_amount">Fixed (₹)</option>
+                      <option value="percentage">Percentage (%)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Discount code / label</label>
+                    <input
+                      type="text"
+                      value={dto.discount?.code ?? ''}
+                      placeholder="DISCOUNT"
+                      onChange={(e) =>
+                        updateDiscount({
+                          amount: dto.discount?.amount ?? 0,
+                          code: e.target.value.trim() || null,
+                        })
+                      }
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  {dto.discount && dto.discount.amount > 0 && (
+                    <p className="sm:col-span-3 text-xs text-gray-500">
+                      Subtotal ₹{lineSubtotal(lineItems).toFixed(2)} − discount ₹
+                      {discountOff(lineSubtotal(lineItems), dto.discount).toFixed(2)} = ₹{dto.amount.toFixed(2)}
+                    </p>
+                  )}
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-600 mb-1">Tags (comma-separated)</label>
@@ -637,7 +815,7 @@ export default function Orders() {
       {tab === 'orders' && (
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-gray-700">Order history</h3>
+            <h3 className="font-semibold text-gray-700">Shopify orders</h3>
             <button
               type="button"
               onClick={() => loadRecent()}
@@ -646,11 +824,51 @@ export default function Orders() {
               Refresh
             </button>
           </div>
+          <p className="text-xs text-gray-400 mb-3">
+            Showing orders synced from Shopify only. Create an order or click Sync orders to refresh.
+          </p>
+
+          {editing && (
+            <div className="mb-4 rounded-lg border border-green-200 bg-green-50/50 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold text-gray-800">
+                  Edit {editing.shopify_order_name ?? 'order'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setEditing(null)}
+                  className="text-sm text-gray-500 hover:text-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Customer name" value={editCustomerName} onChange={setEditCustomerName} />
+                <Field label="Phone" value={editPhone} onChange={setEditPhone} />
+                <Field label="Email" value={editEmail} onChange={setEditEmail} />
+                <Field label="Tags (comma-separated)" value={editTags} onChange={setEditTags} />
+                <div className="sm:col-span-2">
+                  <Field label="Note (Shopify)" value={editNote} onChange={setEditNote} />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                disabled={savingEdit}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+              >
+                {savingEdit ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          )}
+
           {recent.length === 0 ? (
-            <p className="text-sm text-gray-400">No orders created yet.</p>
+            <p className="text-sm text-gray-400">
+              No synced Shopify orders yet. Create an order or click <span className="font-medium text-gray-600">Sync orders</span>.
+            </p>
           ) : (
             <div className="overflow-x-auto -mx-1 px-1">
-              <table className="w-full min-w-[640px] text-sm">
+              <table className="w-full min-w-[720px] text-sm">
                 <thead>
                   <tr className="text-left text-gray-500 border-b border-gray-100">
                     <th className="py-2 pr-3 font-medium">Order</th>
@@ -659,8 +877,8 @@ export default function Orders() {
                     <th className="py-2 pr-3 font-medium">Email</th>
                     <th className="py-2 pr-3 font-medium">Amount</th>
                     <th className="py-2 pr-3 font-medium">Tags</th>
-                    <th className="py-2 pr-3 font-medium">Status</th>
-                    <th className="py-2 font-medium">When</th>
+                    <th className="py-2 pr-3 font-medium">When</th>
+                    <th className="py-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -682,13 +900,27 @@ export default function Orders() {
                       <td className="py-2 pr-3 text-gray-500">
                         {(row.tags ?? []).join(', ') || '—'}
                       </td>
-                      <td className="py-2 pr-3">
-                        <span className={row.status === 'created' ? 'text-green-600' : 'text-red-500'} title={row.error ?? ''}>
-                          {row.status}
-                        </span>
-                      </td>
-                      <td className="py-2 text-gray-400 whitespace-nowrap">
+                      <td className="py-2 pr-3 text-gray-400 whitespace-nowrap">
                         {new Date(row.created_at).toLocaleString()}
+                      </td>
+                      <td className="py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(row)}
+                            className="text-sm text-green-600 hover:text-green-700"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(row)}
+                            disabled={deletingId === row.id}
+                            className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
+                          >
+                            {deletingId === row.id ? '…' : 'Delete'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
