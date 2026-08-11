@@ -123,6 +123,14 @@ export default function Orders() {
   const [formKey, setFormKey] = useState(0)
   const [syncingOrders, setSyncingOrders] = useState(false)
   const [syncingCustomers, setSyncingCustomers] = useState(false)
+  const [editing, setEditing] = useState<ShopifyOrderRow | null>(null)
+  const [editTags, setEditTags] = useState('')
+  const [editEmail, setEditEmail] = useState('')
+  const [editCustomerName, setEditCustomerName] = useState('')
+  const [editPhone, setEditPhone] = useState('')
+  const [editNote, setEditNote] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const resetCreateForm = () => {
     setPrompt('')
@@ -137,14 +145,23 @@ export default function Orders() {
     if (data?.value) setCache(data.value as unknown as ShopifyProductsCache)
   }, [])
 
+  /** Only list orders that exist in Shopify (synced mirror). */
   const loadRecent = useCallback(async () => {
     const { data } = await supabase
       .from('shopify_orders')
       .select('id, shopify_order_id, shopify_order_name, customer_name, phone, email, amount, tags, status, error, created_at')
+      .not('shopify_order_id', 'is', null)
+      .eq('status', 'created')
       .order('created_at', { ascending: false })
       .limit(100)
     setRecent((data as ShopifyOrderRow[]) ?? [])
   }, [])
+
+  const resyncOrders = useCallback(async () => {
+    const res = await invokeFunction<{ synced: number; removed?: number }>('sync-shopify-orders', {})
+    await loadRecent()
+    return res
+  }, [loadRecent])
 
   useEffect(() => {
     loadCache()
@@ -302,16 +319,72 @@ export default function Orders() {
         })),
         prompt,
       })
-      toast(`Order ${res.orderName} created`, 'success')
+      toast(`Order ${res.orderName} created — syncing from Shopify…`, 'success')
       resetCreateForm()
-      await loadRecent()
       setTab('orders')
+      setSyncingOrders(true)
+      try {
+        const syncRes = await resyncOrders()
+        toast(`Synced ${syncRes.synced} orders from Shopify`, 'success')
+      } catch (syncErr) {
+        toast((syncErr as Error).message, 'error')
+        await loadRecent()
+      } finally {
+        setSyncingOrders(false)
+      }
       if (res.adminUrl) window.open(res.adminUrl, '_blank', 'noopener,noreferrer')
     } catch (e) {
       toast((e as Error).message, 'error')
-      await loadRecent()
     } finally {
       setCreating(false)
+    }
+  }
+
+  const openEdit = (row: ShopifyOrderRow) => {
+    setEditing(row)
+    setEditTags((row.tags ?? []).join(', '))
+    setEditEmail(row.email ?? '')
+    setEditCustomerName(row.customer_name ?? '')
+    setEditPhone(row.phone ?? '')
+    setEditNote('')
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editing) return
+    setSavingEdit(true)
+    try {
+      const payload: Record<string, unknown> = {
+        id: editing.id,
+        tags: editTags.split(',').map((t) => t.trim()).filter(Boolean),
+        email: editEmail.trim() || null,
+        customerName: editCustomerName.trim() || null,
+        phone: editPhone.trim() || null,
+      }
+      if (editNote.trim()) payload.note = editNote.trim()
+      await invokeFunction('update-shopify-order', payload)
+      toast('Order updated', 'success')
+      setEditing(null)
+      await loadRecent()
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  const handleDelete = async (row: ShopifyOrderRow) => {
+    const label = row.shopify_order_name || row.shopify_order_id || 'this order'
+    if (!window.confirm(`Cancel and remove ${label} from the CRM list?`)) return
+    setDeletingId(row.id)
+    try {
+      await invokeFunction('delete-shopify-order', { id: row.id })
+      toast(`Removed ${label}`, 'success')
+      if (editing?.id === row.id) setEditing(null)
+      await loadRecent()
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -321,7 +394,7 @@ export default function Orders() {
         <div>
           <h2 className="text-xl font-semibold text-gray-800">Orders</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            Create Shopify orders from a prompt, browse synced products, and review order history.
+            Create Shopify orders from a prompt, browse synced products, and manage orders synced from Shopify.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -351,9 +424,8 @@ export default function Orders() {
             onClick={async () => {
               setSyncingOrders(true)
               try {
-                const res = await invokeFunction<{ synced: number }>('sync-shopify-orders', {})
+                const res = await resyncOrders()
                 toast(`Synced ${res.synced} orders`, 'success')
-                await loadRecent()
               } catch (e) {
                 toast((e as Error).message, 'error')
               } finally {
@@ -637,7 +709,7 @@ export default function Orders() {
       {tab === 'orders' && (
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-gray-700">Order history</h3>
+            <h3 className="font-semibold text-gray-700">Shopify orders</h3>
             <button
               type="button"
               onClick={() => loadRecent()}
@@ -646,11 +718,51 @@ export default function Orders() {
               Refresh
             </button>
           </div>
+          <p className="text-xs text-gray-400 mb-3">
+            Showing orders synced from Shopify only. Create an order or click Sync orders to refresh.
+          </p>
+
+          {editing && (
+            <div className="mb-4 rounded-lg border border-green-200 bg-green-50/50 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold text-gray-800">
+                  Edit {editing.shopify_order_name ?? 'order'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setEditing(null)}
+                  className="text-sm text-gray-500 hover:text-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Customer name" value={editCustomerName} onChange={setEditCustomerName} />
+                <Field label="Phone" value={editPhone} onChange={setEditPhone} />
+                <Field label="Email" value={editEmail} onChange={setEditEmail} />
+                <Field label="Tags (comma-separated)" value={editTags} onChange={setEditTags} />
+                <div className="sm:col-span-2">
+                  <Field label="Note (Shopify)" value={editNote} onChange={setEditNote} />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                disabled={savingEdit}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+              >
+                {savingEdit ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          )}
+
           {recent.length === 0 ? (
-            <p className="text-sm text-gray-400">No orders created yet.</p>
+            <p className="text-sm text-gray-400">
+              No synced Shopify orders yet. Create an order or click <span className="font-medium text-gray-600">Sync orders</span>.
+            </p>
           ) : (
             <div className="overflow-x-auto -mx-1 px-1">
-              <table className="w-full min-w-[640px] text-sm">
+              <table className="w-full min-w-[720px] text-sm">
                 <thead>
                   <tr className="text-left text-gray-500 border-b border-gray-100">
                     <th className="py-2 pr-3 font-medium">Order</th>
@@ -659,8 +771,8 @@ export default function Orders() {
                     <th className="py-2 pr-3 font-medium">Email</th>
                     <th className="py-2 pr-3 font-medium">Amount</th>
                     <th className="py-2 pr-3 font-medium">Tags</th>
-                    <th className="py-2 pr-3 font-medium">Status</th>
-                    <th className="py-2 font-medium">When</th>
+                    <th className="py-2 pr-3 font-medium">When</th>
+                    <th className="py-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -682,13 +794,27 @@ export default function Orders() {
                       <td className="py-2 pr-3 text-gray-500">
                         {(row.tags ?? []).join(', ') || '—'}
                       </td>
-                      <td className="py-2 pr-3">
-                        <span className={row.status === 'created' ? 'text-green-600' : 'text-red-500'} title={row.error ?? ''}>
-                          {row.status}
-                        </span>
-                      </td>
-                      <td className="py-2 text-gray-400 whitespace-nowrap">
+                      <td className="py-2 pr-3 text-gray-400 whitespace-nowrap">
                         {new Date(row.created_at).toLocaleString()}
+                      </td>
+                      <td className="py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(row)}
+                            className="text-sm text-green-600 hover:text-green-700"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(row)}
+                            disabled={deletingId === row.id}
+                            className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
+                          >
+                            {deletingId === row.id ? '…' : 'Delete'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

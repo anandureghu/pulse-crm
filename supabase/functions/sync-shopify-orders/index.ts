@@ -13,6 +13,7 @@ interface ShopifyOrder {
   total_price?: string
   tags?: string
   created_at?: string
+  cancelled_at?: string | null
   financial_status?: string
   customer?: {
     id?: number
@@ -68,13 +69,27 @@ Deno.serve(async (req) => {
   try {
     const cfg = await loadShopifyConfig()
     let nextUrl: string | null =
-      '/orders.json?status=any&limit=250&fields=id,name,email,total_price,tags,created_at,financial_status,customer,shipping_address,billing_address'
+      '/orders.json?status=any&limit=250&fields=id,name,email,total_price,tags,created_at,cancelled_at,financial_status,customer,shipping_address,billing_address'
     let synced = 0
+    let removed = 0
+    const seenIds = new Set<string>()
 
     while (nextUrl) {
       const { data, link } = await shopifyFetch<{ orders: ShopifyOrder[] }>(cfg, nextUrl)
       for (const o of data.orders ?? []) {
         const shopifyOrderId = String(o.id)
+        seenIds.add(shopifyOrderId)
+
+        // Cancelled/deleted in Shopify should not appear in CRM listing
+        if (o.cancelled_at) {
+          await supabase
+            .from('shopify_orders')
+            .delete()
+            .eq('shopify_order_id', shopifyOrderId)
+          removed++
+          continue
+        }
+
         const tags = (o.tags || '')
           .split(',')
           .map((t) => t.trim())
@@ -102,6 +117,8 @@ Deno.serve(async (req) => {
           tags,
           status: 'created' as const,
           error: null,
+          prompt: null,
+          parsed_dto: null,
         }
 
         if (existing) {
@@ -118,7 +135,19 @@ Deno.serve(async (req) => {
       nextUrl = nextLinkFromHeader(link)
     }
 
-    return json({ ok: true, synced })
+    // Drop local rows that no longer exist in Shopify (or were never synced)
+    const { data: localRows } = await supabase
+      .from('shopify_orders')
+      .select('id, shopify_order_id')
+
+    for (const row of localRows ?? []) {
+      if (!row.shopify_order_id || !seenIds.has(row.shopify_order_id)) {
+        await supabase.from('shopify_orders').delete().eq('id', row.id)
+        removed++
+      }
+    }
+
+    return json({ ok: true, synced, removed })
   } catch (e) {
     return err((e as Error).message, 500)
   }

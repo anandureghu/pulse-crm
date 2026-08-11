@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
     return err('Invalid JSON')
   }
 
-  let { dto, prompt } = body
+  let { dto } = body
   if (!dto?.customer) return err('dto.customer required')
   if (dto.amount == null) return err('dto.amount required')
 
@@ -66,7 +66,6 @@ Deno.serve(async (req) => {
   let shopifyCustomerId: string | null = null
   let shopifyOrderId: string | null = null
   let shopifyOrderName: string | null = null
-  const variantIdsLog = selected.map((l) => String(l.variantId)).join(',')
 
   try {
     const cfg = await loadShopifyConfig()
@@ -228,22 +227,7 @@ Deno.serve(async (req) => {
       })
     }
 
-    await supabase.from('shopify_orders').insert({
-      shopify_order_id: shopifyOrderId,
-      shopify_order_name: shopifyOrderName,
-      shopify_customer_id: shopifyCustomerId,
-      customer_name: [dto.customer.firstName, dto.customer.lastName].filter(Boolean).join(' ').trim() || null,
-      phone: phoneDigits,
-      email: dto.customer.email || null,
-      amount: dto.amount,
-      variant_id: variantIdsLog,
-      tags,
-      prompt: prompt || null,
-      parsed_dto: { ...dto, selectedLineItems: selected },
-      status: 'created',
-      created_by: user.id,
-    })
-
+    // Local DB is a Shopify mirror only — client resyncs via sync-shopify-orders after create.
     const adminUrl = `https://${cfg.shopDomain}/admin/orders/${shopifyOrderId}`
 
     return json({
@@ -254,23 +238,6 @@ Deno.serve(async (req) => {
       adminUrl,
     })
   } catch (e) {
-    const message = (e as Error).message
-    await supabase.from('shopify_orders').insert({
-      shopify_order_id: shopifyOrderId,
-      shopify_order_name: shopifyOrderName,
-      shopify_customer_id: shopifyCustomerId,
-      customer_name: [dto.customer.firstName, dto.customer.lastName].filter(Boolean).join(' ').trim() || null,
-      phone: phoneDigits,
-      email: dto.customer.email || null,
-      amount: dto.amount,
-      variant_id: variantIdsLog,
-      tags: Array.isArray(dto.tags) ? dto.tags : [],
-      prompt: prompt || null,
-      parsed_dto: dto,
-      status: 'failed',
-      error: message,
-      created_by: user.id,
-    })
-    return err(message, 500)
+    return err((e as Error).message, 500)
   }
 })

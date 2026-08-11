@@ -689,6 +689,7 @@ supabase functions deploy`}</pre>
             <code className="bg-gray-100 px-1 rounded">read_products</code>{' '}
             <code className="bg-gray-100 px-1 rounded">read_customers</code>{' '}
             <code className="bg-gray-100 px-1 rounded">write_customers</code>{' '}
+            <code className="bg-gray-100 px-1 rounded">read_orders</code>{' '}
             <code className="bg-gray-100 px-1 rounded">write_orders</code>
             . Install the app on your store first.
           </p>

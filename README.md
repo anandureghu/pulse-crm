@@ -73,7 +73,8 @@ supabase functions deploy
 ```
 
 New Shopify Order Area functions (after configuring Shopify in Settings):
-`sync-shopify-products`, `parse-order-prompt`, `create-shopify-order`.
+`sync-shopify-products`, `sync-shopify-orders`, `sync-shopify-customers`,
+`parse-order-prompt`, `create-shopify-order`, `update-shopify-order`, `delete-shopify-order`.
 
 ### 6. Evolution API webhook
 
@@ -87,12 +88,17 @@ Enable events: `messages.upsert`, `messages.update`
 ### 7. Shopify Order Area (optional)
 
 1. Create/install an app in **Shopify Dev Dashboard**, scopes:
-   `read_products`, `read_customers`, `write_customers`, `write_orders`
+   `read_products`, `read_customers`, `write_customers`, `read_orders`, `write_orders`
 2. In **Settings → Shopify**, set:
    - Shop domain (`your-store.myshopify.com`)
    - **Client ID** + **Client secret** (Dev Dashboard → Settings)
 3. Ensure **Settings → AI Assistant** has an OpenAI API key (used to parse order prompts)
 4. Open **Orders** → **Sync products** → paste prompt → **Parse with AI** → create order
+5. After create, the app **resyncs orders from Shopify** and lists only those synced rows.
+   Use Edit / Delete on the Orders tab to update tags/note or cancel+remove an order.
+
+Edge functions: `sync-shopify-products`, `sync-shopify-orders`, `sync-shopify-customers`,
+`parse-order-prompt`, `create-shopify-order`, `update-shopify-order`, `delete-shopify-order`.
 
 Edge functions exchange client credentials for a short-lived Admin API token automatically.
 ### 8. Daily follow-up reminders (optional)
