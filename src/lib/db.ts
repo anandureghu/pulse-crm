@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Customer, Enquiry, Conversation, Message, Note, Activity, Followup } from '../types'
+import type { Customer, Enquiry, Conversation, Message, Note, Activity, Followup, EnrichedFollowup } from '../types'
 
 type Unsubscribe = () => void
 
@@ -316,6 +316,31 @@ export async function deleteNote(id: string) {
   return supabase.from('notes').delete().eq('id', id)
 }
 
+export async function getNotesForEnquiry(enquiryId: string): Promise<Note[]> {
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('enquiry_id', enquiryId)
+    .order('created_at', { ascending: false })
+  return (data ?? []).map(fromRow<Note>)
+}
+
+/** All notes across every enquiry for a customer. */
+export async function getNotesForCustomer(customerId: string): Promise<Note[]> {
+  const { data: enquiries } = await supabase
+    .from('enquiries')
+    .select('id')
+    .eq('customer_id', customerId)
+  const ids = (enquiries ?? []).map((e) => e.id as string)
+  if (!ids.length) return []
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .in('enquiry_id', ids)
+    .order('created_at', { ascending: false })
+  return (data ?? []).map(fromRow<Note>)
+}
+
 // ── Activities ────────────────────────────────────────────────────────────────
 
 export function subscribeToActivities(
@@ -350,6 +375,18 @@ export async function logActivity(data: Omit<Activity, 'id' | 'createdAt'>) {
 
 // ── Follow-ups ────────────────────────────────────────────────────────────────
 
+function sortFollowups(items: Followup[]): Followup[] {
+  return items.sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1
+    if (a.completed && b.completed) {
+      const aDone = a.completedAt ? new Date(a.completedAt).getTime() : 0
+      const bDone = b.completedAt ? new Date(b.completedAt).getTime() : 0
+      if (aDone !== bDone) return bDone - aDone
+    }
+    return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
+  })
+}
+
 export function subscribeToFollowups(
   assignedTo: string,
   onData: (followups: Followup[]) => void
@@ -361,9 +398,7 @@ export function subscribeToFollowups(
       .eq('assigned_to', assignedTo)
       .eq('completed', false)
       .then(({ data }) => {
-        const items = (data ?? []).map(fromRow<Followup>)
-        items.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
-        onData(items)
+        onData(sortFollowups((data ?? []).map(fromRow<Followup>)))
       })
 
   fetch()
@@ -376,16 +411,15 @@ export function subscribeToFollowups(
   return () => { supabase.removeChannel(channel) }
 }
 
+/** All follow-ups (pending + completed) for the Follow-ups page tabs. */
 export function subscribeToAllFollowups(onData: (followups: Followup[]) => void): Unsubscribe {
   const fetch = () =>
     supabase
       .from('followups')
       .select('*')
-      .eq('completed', false)
+      .order('due_date', { ascending: true })
       .then(({ data }) => {
-        const items = (data ?? []).map(fromRow<Followup>)
-        items.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
-        onData(items)
+        onData(sortFollowups((data ?? []).map(fromRow<Followup>)))
       })
 
   fetch()
@@ -398,12 +432,107 @@ export function subscribeToAllFollowups(onData: (followups: Followup[]) => void)
   return () => { supabase.removeChannel(channel) }
 }
 
-export async function createFollowup(data: Omit<Followup, 'id'>) {
+export function subscribeToFollowupsForEnquiries(
+  enquiryIds: string[],
+  onData: (followups: Followup[]) => void
+): Unsubscribe {
+  if (!enquiryIds.length) {
+    onData([])
+    return () => {}
+  }
+
+  const fetch = () =>
+    supabase
+      .from('followups')
+      .select('*')
+      .in('enquiry_id', enquiryIds)
+      .then(({ data }) => {
+        onData(sortFollowups((data ?? []).map(fromRow<Followup>)))
+      })
+
+  fetch()
+
+  const channel = supabase
+    .channel(`followups:enquiries:${crypto.randomUUID()}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'followups' }, fetch)
+    .subscribe()
+
+  return () => { supabase.removeChannel(channel) }
+}
+
+export async function enrichFollowups(followups: Followup[]): Promise<EnrichedFollowup[]> {
+  if (!followups.length) return []
+
+  const enquiryIds = [...new Set(followups.map((f) => f.enquiryId))]
+  const { data: enquiryRows } = await supabase
+    .from('enquiries')
+    .select('id, customer_id')
+    .in('id', enquiryIds)
+
+  const enquiryToCustomer = new Map<string, string>()
+  for (const row of enquiryRows ?? []) {
+    enquiryToCustomer.set(row.id as string, row.customer_id as string)
+  }
+
+  const customerIds = [...new Set([...enquiryToCustomer.values()])]
+  const customerMap = new Map<string, { name: string; phone: string }>()
+  if (customerIds.length) {
+    const { data: customerRows } = await supabase
+      .from('customers')
+      .select('id, name, phone')
+      .in('id', customerIds)
+    for (const row of customerRows ?? []) {
+      customerMap.set(row.id as string, {
+        name: (row.name as string) || 'Unknown',
+        phone: (row.phone as string) || '',
+      })
+    }
+  }
+
+  return followups.map((f) => {
+    const customerId = enquiryToCustomer.get(f.enquiryId) ?? null
+    const customer = customerId ? customerMap.get(customerId) : null
+    return {
+      ...f,
+      customerId,
+      customerName: customer?.name ?? f.enquiryId,
+      customerPhone: customer?.phone ?? null,
+    }
+  })
+}
+
+export async function createFollowup(data: Omit<Followup, 'id' | 'completedAt' | 'createdAt'>) {
   return supabase.from('followups').insert(toRow(data as Record<string, unknown>))
 }
 
+export async function updateFollowup(
+  id: string,
+  data: Partial<Pick<Followup, 'note' | 'dueDate' | 'assignedTo' | 'completed' | 'completedAt'>>
+) {
+  return supabase.from('followups').update(toRow(data as Record<string, unknown>)).eq('id', id)
+}
+
 export async function completeFollowup(id: string) {
+  const withAt = await supabase
+    .from('followups')
+    .update({ completed: true, completed_at: new Date().toISOString() })
+    .eq('id', id)
+  if (!withAt.error) return withAt
+  // Fallback before completed_at migration is applied
   return supabase.from('followups').update({ completed: true }).eq('id', id)
+}
+
+export async function uncompleteFollowup(id: string) {
+  const withAt = await supabase
+    .from('followups')
+    .update({ completed: false, completed_at: null })
+    .eq('id', id)
+  if (!withAt.error) return withAt
+  return supabase.from('followups').update({ completed: false }).eq('id', id)
+}
+
+export async function deleteFollowup(id: string) {
+  return supabase.from('followups').delete().eq('id', id)
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────

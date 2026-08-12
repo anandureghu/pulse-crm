@@ -1,21 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { getCustomer, getConversationByCustomer, updateCustomer } from '../lib/db'
+import { getCustomer, getConversationByCustomer, updateCustomer, userLabel } from '../lib/db'
 import { useEnquiriesByCustomer } from '../hooks/useEnquiries'
 import { useNotes } from '../hooks/useNotes'
 import { useActivities } from '../hooks/useActivities'
 import { useMessages } from '../hooks/useConversations'
-import { useCreateFollowup } from '../hooks/useCreateFollowup'
+import { useCustomerFollowups } from '../hooks/useCustomerFollowups'
 import { useUsers } from '../hooks/useUsers'
 import { useAuthStore } from '../store/authStore'
 import { assignEnquiryFn, updateEnquiryStatusFn } from '../lib/functions'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
+import { FollowupFormModal } from '../components/FollowupFormModal'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
-import type { Customer, Enquiry } from '../types'
+import type { Customer, Enquiry, Followup } from '../types'
 
-type Tab = 'profile' | 'timeline' | 'whatsapp' | 'notes' | 'enquiries' | 'files' | 'calls' | 'payments'
+type Tab = 'profile' | 'timeline' | 'whatsapp' | 'notes' | 'enquiries' | 'followups' | 'files' | 'calls' | 'payments'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'profile', label: 'Profile' },
@@ -23,6 +24,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'whatsapp', label: 'WhatsApp' },
   { key: 'notes', label: 'Notes' },
   { key: 'enquiries', label: 'Enquiries' },
+  { key: 'followups', label: 'Follow-ups' },
   { key: 'files', label: 'Files' },
   { key: 'calls', label: 'Call Logs' },
   { key: 'payments', label: 'Payments' },
@@ -53,14 +55,21 @@ export default function CustomerDetail() {
   const { notes, add: addNote, remove: removeNote } = useNotes(selectedEnquiry?.id ?? null)
   const { activities, log: logActivity } = useActivities(selectedEnquiry?.id ?? null)
   const messages = useMessages(convId)
-  const { create: createFollowup } = useCreateFollowup()
+  const enquiryIds = enquiries.map((e) => e.id)
+  const {
+    pending: pendingFollowups,
+    completed: completedFollowups,
+    loading: followupsLoading,
+    complete: completeFollowupItem,
+    uncomplete: uncompleteFollowupItem,
+    remove: removeFollowupItem,
+    update: updateFollowupItem,
+  } = useCustomerFollowups(enquiryIds)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [noteText, setNoteText] = useState('')
   const [showFollowupForm, setShowFollowupForm] = useState(false)
-  const [followupNote, setFollowupNote] = useState('')
-  const [followupDate, setFollowupDate] = useState('')
-  const [followupTime, setFollowupTime] = useState('09:00')
+  const [editingFollowup, setEditingFollowup] = useState<Followup | null>(null)
   const [editName, setEditName] = useState('')
   const [editingName, setEditingName] = useState(false)
 
@@ -88,19 +97,6 @@ export default function CustomerDetail() {
     if ((result as any)?.error) { toast('Failed to add note', 'error'); return }
     await logActivity('note_added', `Note added: "${noteText.slice(0, 80)}"`)
     setNoteText('')
-  }
-
-  const handleCreateFollowup = async () => {
-    if (!latestEnquiry || !followupDate) return
-    const dt = new Date(`${followupDate}T${followupTime}`)
-    const result = await createFollowup(latestEnquiry.id, followupNote, dt)
-    if ((result as any)?.error) { toast('Failed to schedule follow-up', 'error'); return }
-    await logActivity('followup_created', `Follow-up scheduled for ${followupDate} at ${followupTime}`)
-    setShowFollowupForm(false)
-    setFollowupNote('')
-    setFollowupDate('')
-    setFollowupTime('09:00')
-    toast('Follow-up scheduled', 'success')
   }
 
   const handleAssign = async (assignTo: string) => {
@@ -243,6 +239,20 @@ export default function CustomerDetail() {
         />
       )}
       {tab === 'enquiries' && <EnquiriesTab enquiries={enquiries} />}
+      {tab === 'followups' && (
+        <CustomerFollowupsTab
+          pending={pendingFollowups}
+          completed={completedFollowups}
+          loading={followupsLoading}
+          users={users}
+          onComplete={completeFollowupItem}
+          onUncomplete={uncompleteFollowupItem}
+          onDelete={removeFollowupItem}
+          onEdit={setEditingFollowup}
+          onSchedule={() => setShowFollowupForm(true)}
+          canSchedule={!!latestEnquiry}
+        />
+      )}
       {tab === 'files' && (
         <FilesTab
           customerId={id!}
@@ -255,57 +265,28 @@ export default function CustomerDetail() {
       {tab === 'payments' && <PaymentsTab customerId={id!} authorEmail={user?.email ?? ''} onActivity={logActivity} />}
 
       {showFollowupForm && (
-        <div className="fixed inset-0 bg-black/30 flex items-end sm:items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-xl">
-            <h3 className="font-semibold text-gray-800 mb-4">Schedule Follow-up</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Note</label>
-                <input
-                  value={followupNote}
-                  onChange={(e) => setFollowupNote(e.target.value)}
-                  placeholder="e.g. Call about pricing"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <label className="block text-sm text-gray-600 mb-1">Due Date</label>
-                  <input
-                    type="date"
-                    value={followupDate}
-                    onChange={(e) => setFollowupDate(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-                <div className="w-28">
-                  <label className="block text-sm text-gray-600 mb-1">Time</label>
-                  <input
-                    type="time"
-                    value={followupTime}
-                    onChange={(e) => setFollowupTime(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={handleCreateFollowup}
-                disabled={!followupDate}
-                className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-40"
-              >
-                Schedule
-              </button>
-              <button
-                onClick={() => setShowFollowupForm(false)}
-                className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <FollowupFormModal
+          mode="create"
+          lockedCustomerId={customer.id}
+          lockedCustomerName={customer.name}
+          onClose={() => setShowFollowupForm(false)}
+          onSaved={() => {
+            logActivity('followup_created', 'Follow-up scheduled')
+          }}
+        />
+      )}
+      {editingFollowup && (
+        <FollowupFormModal
+          mode="edit"
+          editing={{
+            ...editingFollowup,
+            customerId: customer.id,
+            customerName: customer.name,
+            customerPhone: customer.phone,
+          }}
+          onClose={() => setEditingFollowup(null)}
+          onUpdate={async (id, data) => updateFollowupItem(id, data)}
+        />
       )}
     </div>
   )
@@ -555,6 +536,140 @@ function EnquiriesTab({ enquiries }: { enquiries: Enquiry[] }) {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+function CustomerFollowupsTab({
+  pending,
+  completed,
+  loading,
+  users,
+  onComplete,
+  onUncomplete,
+  onDelete,
+  onEdit,
+  onSchedule,
+  canSchedule,
+}: {
+  pending: Followup[]
+  completed: Followup[]
+  loading: boolean
+  users: Array<{ id: string; email: string; username: string | null }>
+  onComplete: (id: string) => Promise<boolean>
+  onUncomplete: (id: string) => Promise<boolean>
+  onDelete: (id: string) => Promise<boolean>
+  onEdit: (f: Followup) => void
+  onSchedule: () => void
+  canSchedule: boolean
+}) {
+  const [subTab, setSubTab] = useState<'pending' | 'completed'>('pending')
+
+  const labelFor = (assignedTo: string) => {
+    const u = users.find((x) => x.email === assignedTo || x.id === assignedTo)
+    return u ? userLabel(u) : assignedTo
+  }
+
+  const list = subTab === 'pending' ? pending : completed
+
+  return (
+    <div className="max-w-lg w-full">
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <div className="flex gap-1 border-b border-gray-200">
+          {(
+            [
+              { key: 'pending' as const, label: 'Pending', count: pending.length },
+              { key: 'completed' as const, label: 'Completed', count: completed.length },
+            ]
+          ).map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setSubTab(t.key)}
+              className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${
+                subTab === t.key
+                  ? 'border-green-600 text-green-700'
+                  : 'border-transparent text-gray-500'
+              }`}
+            >
+              {t.label} ({t.count})
+            </button>
+          ))}
+        </div>
+        {canSchedule && (
+          <button
+            type="button"
+            onClick={onSchedule}
+            className="text-sm bg-yellow-500 text-white px-3 py-1.5 rounded-lg hover:bg-yellow-600 flex-shrink-0"
+          >
+            + Schedule
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-400">Loading…</p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-gray-400">
+          {subTab === 'pending' ? 'No pending follow-ups for this customer.' : 'No completed follow-ups yet.'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {list.map((f) => (
+            <div key={f.id} className="bg-white rounded-xl border border-gray-200 p-4">
+              <div className="flex items-start gap-3">
+                {subTab === 'pending' ? (
+                  <input
+                    type="checkbox"
+                    onChange={() => onComplete(f.id)}
+                    className="mt-0.5 w-4 h-4 accent-green-600 cursor-pointer"
+                    title="Mark complete"
+                  />
+                ) : (
+                  <span className="mt-0.5 w-4 h-4 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-[10px]">✓</span>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-800">{f.note || 'No note'}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {new Date(f.dueDate).toLocaleString('en-GB', {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    {' · '}
+                    {labelFor(f.assignedTo)}
+                    {f.completedAt && (
+                      <>
+                        {' · Done '}
+                        {new Date(f.completedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1 flex-shrink-0">
+                  {subTab === 'pending' ? (
+                    <button type="button" onClick={() => onEdit(f)} className="text-xs text-blue-600 hover:text-blue-700">
+                      Edit
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => onUncomplete(f.id)} className="text-xs text-gray-600 hover:text-gray-800">
+                      Undo
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { if (confirm('Delete this follow-up?')) onDelete(f.id) }}
+                    className="text-xs text-red-400 hover:text-red-600"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

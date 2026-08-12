@@ -80,6 +80,14 @@ export interface Followup {
   enquiryId: string
   dueDate: string
   completed: boolean
+  completedAt?: string | null
   note: string
   assignedTo: string
+  createdAt?: string
+}
+
+export interface EnrichedFollowup extends Followup {
+  customerId: string | null
+  customerName: string
+  customerPhone: string | null
 }

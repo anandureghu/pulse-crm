@@ -22,7 +22,7 @@ const STAGES: { key: EnquiryStatus; label: string; header: string }[] = [
   { key: 'new_lead',            label: 'New Lead',        header: 'bg-gray-100 text-gray-700' },
   { key: 'assigned',            label: 'Assigned',        header: 'bg-blue-100 text-blue-700' },
   { key: 'interested',          label: 'Interested',      header: 'bg-yellow-100 text-yellow-700' },
-  { key: 'follow_up_required',  label: 'Follow-up',       header: 'bg-orange-100 text-orange-700' },
+  { key: 'follow_up_required',  label: 'Follow-up req.', header: 'bg-orange-100 text-orange-700' },
   { key: 'negotiation',         label: 'Negotiation',     header: 'bg-purple-100 text-purple-700' },
   { key: 'ready_to_buy',        label: 'Ready to Buy',    header: 'bg-teal-100 text-teal-700' },
   { key: 'sale_completed',      label: 'Completed',       header: 'bg-green-100 text-green-700' },
