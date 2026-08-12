@@ -124,29 +124,33 @@ export async function fetchMediaBase64(
 // ── Assign enquiry (direct DB write) ─────────────────────────────────────────
 
 export async function assignEnquiryFn(body: { enquiryId: string; assignTo: string; customerId?: string }) {
+  const { data: current } = await supabase
+    .from('enquiries')
+    .select('status, customer_id')
+    .eq('id', body.enquiryId)
+    .maybeSingle()
+
+  const enquiryPatch: Record<string, unknown> = {
+    assigned_to: body.assignTo || null,
+  }
+  // Move New Lead → Assigned in the pipeline when someone is assigned
+  if (body.assignTo && current?.status === 'new_lead') {
+    enquiryPatch.status = 'assigned'
+    enquiryPatch.stage = 'assigned'
+  }
+
   const { error } = await supabase
     .from('enquiries')
-    .update({ assigned_to: body.assignTo || null })
+    .update(enquiryPatch)
     .eq('id', body.enquiryId)
   if (error) throw error
 
-  if (body.customerId) {
+  const customerId = body.customerId ?? (current?.customer_id as string | undefined)
+  if (customerId) {
     await supabase
       .from('customers')
       .update({ assigned_to: body.assignTo || null })
-      .eq('id', body.customerId)
-  } else {
-    const { data: enq } = await supabase
-      .from('enquiries')
-      .select('customer_id')
-      .eq('id', body.enquiryId)
-      .maybeSingle()
-    if (enq?.customer_id) {
-      await supabase
-        .from('customers')
-        .update({ assigned_to: body.assignTo || null })
-        .eq('id', enq.customer_id)
-    }
+      .eq('id', customerId)
   }
 
   await supabase.from('activities').insert({

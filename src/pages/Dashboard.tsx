@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import { useEnquiries } from '../hooks/useEnquiries'
 import { useFollowups, useEnrichedFollowups } from '../hooks/useFollowups'
 import { useCustomers } from '../hooks/useCustomers'
+import { useUsers } from '../hooks/useUsers'
+import { userLabel } from '../lib/db'
 
 function localDateKey(d = new Date()) {
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -19,6 +21,7 @@ export default function Dashboard() {
   const { enquiries } = useEnquiries()
   const { followups } = useFollowups()
   const { customers: allCustomers } = useCustomers()
+  const users = useUsers()
   const { enriched } = useEnrichedFollowups(followups)
 
   const today = localDateKey()
@@ -37,6 +40,12 @@ export default function Dashboard() {
   ]
 
   const recentEnquiries = enquiries.slice(0, 5)
+  const customerNameById = new Map(allCustomers.map((c) => [c.id, c.name]))
+  const assigneeDisplay = (assignedTo: string | null | undefined) => {
+    if (!assignedTo?.trim()) return 'Unassigned'
+    const u = users.find((x) => x.email === assignedTo || x.id === assignedTo || userLabel(x) === assignedTo)
+    return u ? userLabel(u) : assignedTo
+  }
 
   return (
     <div className="p-4 sm:p-6 max-w-full min-w-0">
@@ -86,17 +95,28 @@ export default function Dashboard() {
             <p className="text-sm text-gray-400">No enquiries yet.</p>
           ) : (
             <div className="space-y-2">
-              {recentEnquiries.map((e) => (
-                <div key={e.id} className="flex items-center gap-3 text-sm">
-                  <span className={`px-2 py-0.5 rounded-full text-xs ${statusColor(e.status)}`}>
-                    {e.status.replace(/_/g, ' ')}
-                  </span>
-                  <span className="text-gray-500 text-xs">
-                    {e.createdAt ? new Date(e.createdAt).toLocaleDateString() : ''}
-                  </span>
-                  <span className="text-gray-400 ml-auto text-xs">{e.assignedTo ?? 'Unassigned'}</span>
-                </div>
-              ))}
+              {recentEnquiries.map((e) => {
+                const name = customerNameById.get(e.customerId) ?? 'Unknown customer'
+                const assignee =
+                  e.assignedTo?.trim()
+                  || allCustomers.find((c) => c.id === e.customerId)?.assignedTo?.trim()
+                  || null
+                return (
+                  <Link
+                    key={e.id}
+                    to={`/customers/${e.customerId}`}
+                    className="flex items-center gap-3 text-sm hover:bg-gray-50 rounded-lg px-1 py-1 -mx-1"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-gray-800 font-medium truncate">{name}</p>
+                      <p className="text-xs text-gray-400 truncate">{assigneeDisplay(assignee)}</p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-xs capitalize flex-shrink-0 ${statusColor(e.status)}`}>
+                      {e.status.replace(/_/g, ' ')}
+                    </span>
+                  </Link>
+                )
+              })}
             </div>
           )}
         </div>

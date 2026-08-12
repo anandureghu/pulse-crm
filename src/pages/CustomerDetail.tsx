@@ -107,6 +107,7 @@ export default function CustomerDetail() {
         assignTo,
         customerId: customer?.id,
       })
+      setCustomer((prev) => (prev ? { ...prev, assignedTo: assignTo } : prev))
       toast('Assigned successfully', 'success')
     } catch {
       toast('Failed to assign', 'error')
@@ -315,10 +316,9 @@ function ProfileTab({
     await supabase.from('customers').update({ ai_autoreply: next }).eq('id', customer.id)
   }
 
-  // Sync when enquiry updates (e.g. via Realtime)
   useEffect(() => {
-    setAssignTo(latestEnquiry?.assignedTo ?? '')
-  }, [latestEnquiry?.assignedTo])
+    setAssignTo(latestEnquiry?.assignedTo ?? customer.assignedTo ?? '')
+  }, [latestEnquiry?.assignedTo, customer.assignedTo])
 
   const filteredUsers = users.filter((u) => {
     const q = assignSearch.trim().toLowerCase()
@@ -340,6 +340,14 @@ function ProfileTab({
           <div className="flex justify-between">
             <dt className="text-gray-500">Phone</dt>
             <dd className="text-gray-800 font-medium">{formatPhoneDisplay(customer.phone)}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-gray-500 flex-shrink-0">Assigned to</dt>
+            <dd className="text-gray-800 font-medium text-right truncate">
+              {customer.assignedTo?.trim()
+                || latestEnquiry?.assignedTo?.trim()
+                || <span className="text-gray-400 font-normal">Unassigned</span>}
+            </dd>
           </div>
           <div className="flex justify-between">
             <dt className="text-gray-500">Customer since</dt>
@@ -380,6 +388,14 @@ function ProfileTab({
               <dt className="text-gray-500">Status</dt>
               <dd className="text-gray-800 font-medium capitalize">{latestEnquiry.status.replace(/_/g, ' ')}</dd>
             </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-gray-500 flex-shrink-0">Assigned to</dt>
+              <dd className="text-gray-800 font-medium text-right truncate">
+                {latestEnquiry.assignedTo?.trim()
+                  || customer.assignedTo?.trim()
+                  || <span className="text-gray-400 font-normal">Unassigned</span>}
+              </dd>
+            </div>
             <div className="flex justify-between">
               <dt className="text-gray-500">Value</dt>
               <dd className="text-gray-800">₹{(latestEnquiry.value ?? 0).toLocaleString('en-IN')}</dd>
@@ -399,6 +415,9 @@ function ProfileTab({
                   className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
                 >
                   <option value="">Unassigned</option>
+                  {assignTo && !filteredUsers.some((u) => labelFor(u) === assignTo || u.email === assignTo) && (
+                    <option value={assignTo}>{assignTo}</option>
+                  )}
                   {filteredUsers.map((u) => (
                     <option key={u.id} value={labelFor(u)}>
                       {labelFor(u)}{u.username ? ` · ${u.email}` : ''}
@@ -990,6 +1009,15 @@ interface Payment {
   createdAt: string
 }
 
+const EMPTY_PAYMENT_FORM = {
+  amount: '',
+  currency: 'INR',
+  method: 'bank_transfer',
+  status: 'received',
+  reference: '',
+  notes: '',
+}
+
 function PaymentsTab({
   customerId,
   authorEmail,
@@ -1001,92 +1029,197 @@ function PaymentsTab({
 }) {
   const [payments, setPayments] = useState<Payment[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ amount: '', currency: 'INR', method: 'bank_transfer', status: 'received', reference: '', notes: '' })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState(EMPTY_PAYMENT_FORM)
+
+  const mapPayment = (r: Record<string, unknown>): Payment => ({
+    id: r.id as string,
+    amount: Number(r.amount),
+    currency: (r.currency as string) || 'INR',
+    method: (r.method as string) || 'cash',
+    status: (r.status as string) || 'pending',
+    reference: (r.reference as string) || '',
+    notes: (r.notes as string) || '',
+    recordedBy: (r.recorded_by as string) || '',
+    createdAt: (r.created_at as string) || '',
+  })
+
+  const fetchPayments = async () => {
+    const { data } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('customer_id', customerId)
+      .order('created_at', { ascending: false })
+    setPayments((data ?? []).map((r) => mapPayment(r as Record<string, unknown>)))
+  }
 
   useEffect(() => {
-    const fetchPayments = () =>
-      supabase
-        .from('payments')
-        .select('*')
-        .eq('customer_id', customerId)
-        .order('created_at', { ascending: false })
-        .then(({ data }) => {
-          setPayments(
-            (data ?? []).map((r) => ({
-              id: r.id,
-              amount: r.amount,
-              currency: r.currency,
-              method: r.method,
-              status: r.status,
-              reference: r.reference,
-              notes: r.notes,
-              recordedBy: r.recorded_by,
-              createdAt: r.created_at,
-            }))
-          )
-        })
-
     fetchPayments()
 
+    // Unique channel name — DELETE filters often miss without REPLICA IDENTITY FULL
     const channel = supabase
-      .channel(`payments:${customerId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `customer_id=eq.${customerId}` }, fetchPayments)
+      .channel(`payments:${customerId}:${crypto.randomUUID()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `customer_id=eq.${customerId}` }, () => {
+        fetchPayments()
+      })
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId])
 
+  const openCreate = () => {
+    setEditingId(null)
+    setForm(EMPTY_PAYMENT_FORM)
+    setShowForm(true)
+  }
+
+  const openEdit = (p: Payment) => {
+    setEditingId(p.id)
+    setForm({
+      amount: String(p.amount),
+      currency: p.currency || 'INR',
+      method: p.method || 'bank_transfer',
+      status: p.status || 'received',
+      reference: p.reference || '',
+      notes: p.notes || '',
+    })
+    setShowForm(true)
+  }
+
+  const closeForm = () => {
+    setShowForm(false)
+    setEditingId(null)
+    setForm(EMPTY_PAYMENT_FORM)
+  }
+
   const handleSave = async () => {
-    if (!form.amount) return
-    const { error } = await supabase.from('payments').insert({
-      customer_id: customerId,
+    if (!form.amount || Number(form.amount) < 0) {
+      toast('Enter a valid amount', 'error')
+      return
+    }
+    setSaving(true)
+    const payload = {
       amount: Number(form.amount),
       currency: form.currency,
       method: form.method,
       status: form.status,
-      reference: form.reference,
-      notes: form.notes,
-      recorded_by: authorEmail,
-    })
-    if (error) { toast('Failed to record payment', 'error'); return }
-    onActivity('payment_recorded', `Payment recorded: ${form.currency} ${form.amount} (${form.status})`)
-    setForm({ amount: '', currency: 'INR', method: 'bank_transfer', status: 'received', reference: '', notes: '' })
-    setShowForm(false)
-    toast('Payment recorded', 'success')
+      reference: form.reference.trim(),
+      notes: form.notes.trim(),
+    }
+
+    try {
+      if (editingId) {
+        const { data, error } = await supabase
+          .from('payments')
+          .update(payload)
+          .eq('id', editingId)
+          .select('*')
+          .single()
+        if (error) { toast('Failed to update payment', 'error'); return }
+        if (data) {
+          const updated = mapPayment(data as Record<string, unknown>)
+          setPayments((prev) => prev.map((p) => (p.id === editingId ? updated : p)))
+        } else {
+          await fetchPayments()
+        }
+        onActivity('payment_updated', `Payment updated: ${form.currency} ${form.amount} (${form.status})`)
+        toast('Payment updated', 'success')
+      } else {
+        const { data, error } = await supabase
+          .from('payments')
+          .insert({
+            customer_id: customerId,
+            ...payload,
+            recorded_by: authorEmail,
+          })
+          .select('*')
+          .single()
+        if (error) { toast('Failed to record payment', 'error'); return }
+        if (data) {
+          const created = mapPayment(data as Record<string, unknown>)
+          setPayments((prev) => [created, ...prev.filter((p) => p.id !== created.id)])
+        } else {
+          await fetchPayments()
+        }
+        onActivity('payment_recorded', `Payment recorded: ${form.currency} ${form.amount} (${form.status})`)
+        toast('Payment recorded', 'success')
+      }
+      closeForm()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async (p: Payment) => {
+    if (!confirm(`Delete payment of ${p.currency === 'INR' ? '₹' : p.currency + ' '}${p.amount.toLocaleString('en-IN')}?`)) return
+    const { error } = await supabase.from('payments').delete().eq('id', p.id)
+    if (error) { toast('Failed to delete payment', 'error'); return }
+    // Update list immediately — realtime DELETE with filters is unreliable
+    setPayments((prev) => prev.filter((x) => x.id !== p.id))
+    if (editingId === p.id) closeForm()
+    onActivity('payment_deleted', `Payment deleted: ${p.currency} ${p.amount}`)
+    toast('Payment deleted', 'success')
   }
 
   const total = payments.filter((p) => p.status === 'received').reduce((s, p) => s + p.amount, 0)
+  const pendingTotal = payments.filter((p) => p.status === 'pending').reduce((s, p) => s + p.amount, 0)
 
   return (
     <div className="max-w-lg w-full">
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={() => setShowForm(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <button
+          type="button"
+          onClick={openCreate}
+          className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700"
+        >
           + Record Payment
         </button>
         {payments.length > 0 && (
-          <p className="text-sm font-semibold text-gray-700">Total received: ₹{total.toLocaleString('en-IN')}</p>
+          <div className="text-right text-sm">
+            <p className="font-semibold text-gray-700">Received: ₹{total.toLocaleString('en-IN')}</p>
+            {pendingTotal > 0 && (
+              <p className="text-xs text-amber-600">Pending: ₹{pendingTotal.toLocaleString('en-IN')}</p>
+            )}
+          </div>
         )}
       </div>
+
       {showForm && (
         <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-4 space-y-3">
+          <h4 className="text-sm font-semibold text-gray-800">
+            {editingId ? 'Edit Payment' : 'Record Payment'}
+          </h4>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Amount</label>
-              <input type="number" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-                placeholder="0" min="0"
-                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none" />
+              <input
+                type="number"
+                value={form.amount}
+                onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+                placeholder="0"
+                min="0"
+                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Currency</label>
-              <select value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none">
+              <select
+                value={form.currency}
+                onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
                 <option>INR</option><option>USD</option><option>EUR</option><option>GBP</option><option>AED</option>
               </select>
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Method</label>
-              <select value={form.method} onChange={(e) => setForm((f) => ({ ...f, method: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none">
+              <select
+                value={form.method}
+                onChange={(e) => setForm((f) => ({ ...f, method: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
                 <option value="bank_transfer">Bank Transfer</option>
                 <option value="cash">Cash</option>
                 <option value="card">Card</option>
@@ -1095,8 +1228,11 @@ function PaymentsTab({
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Status</label>
-              <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none">
+              <select
+                value={form.status}
+                onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
                 <option value="received">Received</option>
                 <option value="pending">Pending</option>
                 <option value="refunded">Refunded</option>
@@ -1105,43 +1241,85 @@ function PaymentsTab({
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Reference</label>
-            <input value={form.reference} onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
-              placeholder="TXN-12345"
-              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none" />
+            <input
+              value={form.reference}
+              onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
+              placeholder="TXN-12345 / COD"
+              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Notes</label>
-            <input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            <input
+              value={form.notes}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
               placeholder="Optional note"
-              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none" />
+              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
           </div>
           <div className="flex gap-2">
-            <button onClick={handleSave} disabled={!form.amount}
-              className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-green-700 disabled:opacity-40">Save</button>
-            <button onClick={() => setShowForm(false)} className="text-gray-500 text-sm">Cancel</button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!form.amount || saving}
+              className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-green-700 disabled:opacity-40"
+            >
+              {saving ? 'Saving…' : editingId ? 'Update' : 'Save'}
+            </button>
+            <button type="button" onClick={closeForm} className="text-gray-500 text-sm px-2">
+              Cancel
+            </button>
           </div>
         </div>
       )}
+
       {payments.length === 0 ? (
         <p className="text-sm text-gray-400">No payments recorded yet.</p>
       ) : (
         <div className="space-y-2">
           {payments.map((p) => (
-            <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-3">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-gray-800">{p.currency === 'INR' ? '₹' : p.currency} {p.amount.toLocaleString('en-IN')}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  p.status === 'received' ? 'bg-green-100 text-green-700'
-                  : p.status === 'pending' ? 'bg-yellow-100 text-yellow-700'
-                  : 'bg-red-100 text-red-600'
-                }`}>{p.status}</span>
+            <div
+              key={p.id}
+              className={`bg-white rounded-xl border p-3 ${
+                editingId === p.id ? 'border-green-400 ring-1 ring-green-100' : 'border-gray-200'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-gray-800">
+                      {p.currency === 'INR' ? '₹' : `${p.currency} `}{p.amount.toLocaleString('en-IN')}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      p.status === 'received' ? 'bg-green-100 text-green-700'
+                      : p.status === 'pending' ? 'bg-yellow-100 text-yellow-700'
+                      : 'bg-red-100 text-red-600'
+                    }`}>{p.status}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-400">
+                    <span className="capitalize">{p.method.replace(/_/g, ' ')}</span>
+                    {p.reference && <span>Ref: {p.reference}</span>}
+                    <span>{p.createdAt ? new Date(p.createdAt).toLocaleDateString() : ''}</span>
+                  </div>
+                  {p.notes && <p className="text-xs text-gray-500 mt-1">{p.notes}</p>}
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(p)}
+                    className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(p)}
+                    className="text-xs px-2 py-1 rounded-lg text-red-500 hover:bg-red-50"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-3 mt-1 text-xs text-gray-400">
-                <span>{p.method.replace(/_/g, ' ')}</span>
-                {p.reference && <span>Ref: {p.reference}</span>}
-                <span className="ml-auto">{p.createdAt ? new Date(p.createdAt).toLocaleDateString() : ''}</span>
-              </div>
-              {p.notes && <p className="text-xs text-gray-500 mt-1">{p.notes}</p>}
             </div>
           ))}
         </div>

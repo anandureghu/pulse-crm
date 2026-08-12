@@ -260,11 +260,6 @@ export default function Inbox() {
     setAssigning(true)
     setActionsOpen(false)
     try {
-      await supabase
-        .from('customers')
-        .update({ assigned_to: meLabel })
-        .eq('id', selectedCustomer.id)
-
       const { data: enq } = await supabase
         .from('enquiries')
         .select('id')
@@ -279,6 +274,13 @@ export default function Inbox() {
           assignTo: meLabel,
           customerId: selectedCustomer.id,
         })
+      } else {
+        // No enquiry yet — still stamp the customer
+        const { error } = await supabase
+          .from('customers')
+          .update({ assigned_to: meLabel })
+          .eq('id', selectedCustomer.id)
+        if (error) throw error
       }
       toast(`Assigned to ${meLabel}`, 'success')
     } catch {
