@@ -137,17 +137,28 @@ function EmptyBlock({
   )
 }
 
-function FollowupRow({ f, urgent }: { f: EnrichedFollowup; urgent?: boolean }) {
+function FollowupRow({
+  f,
+  urgent,
+  customerId,
+}: {
+  f: EnrichedFollowup
+  urgent?: boolean
+  customerId: string | null
+}) {
+  const to = customerId ? `/customers/${customerId}` : '/followups'
   return (
     <Link
-      to={f.customerId ? `/customers/${f.customerId}` : '/followups'}
+      to={to}
       className="flex items-center gap-3 text-sm rounded-xl px-2.5 py-2 -mx-1 hover:bg-gradient-to-r hover:from-emerald-50/80 hover:to-transparent transition-colors"
     >
       <span
         className={`w-2 h-2 rounded-full flex-shrink-0 ${urgent ? 'bg-rose-500' : 'bg-amber-400'}`}
       />
       <div className="min-w-0 flex-1">
-        <p className="text-gray-800 font-medium truncate">{f.customerName}</p>
+        <p className={`font-medium truncate ${customerId ? 'text-gray-800 hover:text-emerald-700' : 'text-gray-800'}`}>
+          {f.customerName}
+        </p>
         {f.note && <p className="text-xs text-gray-400 truncate">{f.note}</p>}
       </div>
       <span className={`text-xs flex-shrink-0 tabular-nums ${urgent ? 'text-rose-600 font-semibold' : 'text-gray-400'}`}>
@@ -167,9 +178,41 @@ export default function Dashboard() {
   const { payments } = usePayments()
   const users = useUsers()
   const authUser = useAuthStore((s) => s.user)
-  const { enriched } = useEnrichedFollowups(followups)
+  const { enriched: enrichedRemote } = useEnrichedFollowups(followups)
 
   const [scope, setScope] = useState<Scope>('all')
+
+  /** Prefer live enquiry→contact map so profile links work even if async enrich is slow/empty. */
+  const customerIdByEnquiry = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const e of enquiries) {
+      if (e.id && e.customerId) m.set(e.id, e.customerId)
+    }
+    return m
+  }, [enquiries])
+
+  const nameByContactId = useMemo(() => new Map(contacts.map((c) => [c.id, c.name])), [contacts])
+
+  const enriched = useMemo(() => {
+    const remoteById = new Map(enrichedRemote.map((f) => [f.id, f]))
+    return followups.map((f) => {
+      const remote = remoteById.get(f.id)
+      const customerId =
+        remote?.customerId
+        || customerIdByEnquiry.get(f.enquiryId)
+        || null
+      const customerName =
+        (customerId && nameByContactId.get(customerId))
+        || remote?.customerName
+        || 'Unknown contact'
+      return {
+        ...f,
+        customerId,
+        customerName,
+        customerPhone: remote?.customerPhone ?? null,
+      } satisfies EnrichedFollowup
+    })
+  }, [followups, enrichedRemote, customerIdByEnquiry, nameByContactId])
 
   const meLabel = (() => {
     const row = users.find((u) => u.id === authUser?.id)
@@ -242,7 +285,7 @@ export default function Dashboard() {
     .reduce((s, p) => s + p.amount, 0)
 
   const recentEnquiries = scopedEnquiries.slice(0, 6)
-  const nameById = new Map(contacts.map((c) => [c.id, c.name]))
+  const nameById = nameByContactId
 
   const assigneeDisplay = (assignedTo: string | null | undefined) => {
     if (!assignedTo?.trim()) return 'Unassigned'
@@ -387,7 +430,12 @@ export default function Dashboard() {
             >
               <div className="space-y-0.5 max-h-64 overflow-y-auto">
                 {overdueFollowups.slice(0, 8).map((f) => (
-                  <FollowupRow key={f.id} f={f} urgent />
+                  <FollowupRow
+                    key={f.id}
+                    f={f}
+                    urgent
+                    customerId={f.customerId || customerIdByEnquiry.get(f.enquiryId) || null}
+                  />
                 ))}
               </div>
             </Panel>
@@ -411,7 +459,11 @@ export default function Dashboard() {
             ) : (
               <div className="space-y-0.5 max-h-64 overflow-y-auto">
                 {todayFollowups.map((f) => (
-                  <FollowupRow key={f.id} f={f} />
+                  <FollowupRow
+                    key={f.id}
+                    f={f}
+                    customerId={f.customerId || customerIdByEnquiry.get(f.enquiryId) || null}
+                  />
                 ))}
               </div>
             )}

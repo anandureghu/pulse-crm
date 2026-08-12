@@ -83,10 +83,12 @@ export function useFollowups() {
 export function useEnrichedFollowups(followups: Followup[]) {
   const [enriched, setEnriched] = useState<EnrichedFollowup[]>([])
   const [enriching, setEnriching] = useState(false)
+  const key = followups.map((f) => f.id).join(',')
 
   useEffect(() => {
     if (!followups.length) {
       setEnriched([])
+      setEnriching(false)
       return
     }
     let cancelled = false
@@ -98,7 +100,9 @@ export function useEnrichedFollowups(followups: Followup[]) {
       }
     })
     return () => { cancelled = true }
-  }, [followups])
+    // Re-run when the set of follow-up ids changes (not array identity alone).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
 
   return { enriched, enriching }
 }
