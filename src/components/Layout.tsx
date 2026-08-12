@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase'
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊', adminOnly: false },
   { to: '/inbox', label: 'Inbox', icon: '💬', adminOnly: false, badge: 'inbox' as const },
-  { to: '/customers', label: 'Customers', icon: '👥', adminOnly: false },
+  { to: '/customers', label: 'Contacts', icon: '👥', adminOnly: false },
   { to: '/orders', label: 'Orders', icon: '🛒', adminOnly: false },
   { to: '/pipeline', label: 'Pipeline', icon: '📈', adminOnly: false },
   { to: '/calendar', label: 'Calendar', icon: '📅', adminOnly: false },

@@ -255,7 +255,7 @@ export default function Analytics() {
       ['Metric', 'Value'],
       [
         ['Range', range.label],
-        ['Customers (new)', custInRange],
+        ['Contacts (new)', custInRange],
         ['Enquiries', enqInRange.length],
         ['Conversion %', conversion.rate],
         ['Won', conversion.won],
@@ -390,7 +390,7 @@ export default function Analytics() {
               <div className="space-y-5">
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <KpiCard
-                    label="New customers"
+                    label="New contacts"
                     value={custInRange}
                     delta={pctDelta(custInRange, custPrev)}
                     to="/customers"
@@ -491,7 +491,7 @@ export default function Analytics() {
                           .sort((a, b) => b.days - a.days)
                           .slice(0, 8)
                           .map((a) => {
-                            const name = customers.find((c) => c.id === a.customerId)?.name ?? 'Customer'
+                            const name = customers.find((c) => c.id === a.customerId)?.name ?? 'Contact'
                             return (
                               <Link
                                 key={a.id}

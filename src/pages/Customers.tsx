@@ -49,7 +49,7 @@ export default function Customers() {
       const existing = customers.find((c) => normalizePhoneForStorage(c.phone) === phoneNorm)
       if (existing) {
         const convId = await ensureConversation(existing.id)
-        toast('Customer already exists — opening chat', 'success')
+        toast('Contact already exists — opening chat', 'success')
         setShowAdd(false)
         navigate(`/inbox?c=${convId}`)
         return
@@ -62,13 +62,13 @@ export default function Customers() {
         aiAutoreply: false,
       })
       const convId = await ensureConversation(created.id)
-      toast('Customer added', 'success')
+      toast('Contact added', 'success')
       setShowAdd(false)
       setName('')
       setPhone('')
       navigate(`/inbox?c=${convId}`)
     } catch (e) {
-      toast((e as Error).message || 'Failed to add customer', 'error')
+      toast((e as Error).message || 'Failed to add contact', 'error')
     } finally {
       setSaving(false)
     }
@@ -174,8 +174,8 @@ export default function Customers() {
     <div className="p-4 sm:p-6 max-w-full">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-semibold text-gray-800">Customers</h2>
-          <span className="text-sm text-gray-400">{customers.length} total</span>
+          <h2 className="text-xl font-semibold text-gray-800">Contacts</h2>
+          <span className="text-sm text-gray-400">{customers.length} total · leads & enquiries</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -191,7 +191,7 @@ export default function Customers() {
             onClick={() => setShowAdd(true)}
             className="bg-green-600 text-white text-sm font-medium px-3 py-2 rounded-lg hover:bg-green-700"
           >
-            + Add customer
+            + Add contact
           </button>
         </div>
       </div>
@@ -218,7 +218,7 @@ export default function Customers() {
         defaultPageSize={10}
         pageSizeOptions={[10, 25, 50, 100]}
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
-        emptyMessage="No customers match this filter."
+        emptyMessage="No contacts match this filter."
         filterBar={
           <label className="flex flex-col gap-1 text-xs text-gray-500">
             <span className="font-medium text-gray-600">Status</span>
@@ -239,7 +239,7 @@ export default function Customers() {
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
-            <h3 className="text-base font-semibold text-gray-800 mb-4">Add customer</h3>
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Add contact</h3>
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">Name</label>
@@ -248,7 +248,7 @@ export default function Customers() {
                   onChange={(e) => setName(e.target.value)}
                   autoFocus
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  placeholder="Customer name"
+                  placeholder="Contact name"
                 />
               </div>
               <div>
