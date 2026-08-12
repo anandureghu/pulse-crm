@@ -32,3 +32,64 @@ h4,
   width: 100%;
   min-height: 100vh;
 }
+
+@keyframes splash-float {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -14px; }
+}
+
+@keyframes splash-wave {
+  0%, 100% { stroke-dashoffset: 0; opacity: 1; }
+  50% { stroke-dashoffset: 8; opacity: 0.85; }
+}
+
+@keyframes splash-progress {
+  0% { width: 12%; }
+  50% { width: 62%; }
+  100% { width: 88%; }
+}
+
+@keyframes splash-tip {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splash-ripple {
+  from { transform: scale(1); opacity: 0.7; }
+  to { transform: scale(18); opacity: 0; }
+}
+
+@keyframes splash-pulse-glow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0.95; transform: scale(1.08); }
+}
+
+.splash-float {
+  animation: splash-float 5.5s ease-in-out infinite;
+}
+
+.splash-wave {
+  stroke-dasharray: 80;
+  animation: splash-wave 2.2s ease-in-out infinite;
+}
+
+.splash-progress {
+  width: 40%;
+  animation: splash-progress 1.8s ease-in-out infinite;
+}
+
+.splash-tip {
+  animation: splash-tip 0.45s ease-out both;
+}
+
+.splash-ripple {
+  animation: splash-ripple 0.7s ease-out forwards;
+}
+
+.splash-pulse-glow {
+  animation: splash-pulse-glow 2.4s ease-in-out infinite;
+}
+
+.duration-400 {
+  transition-duration: 400ms;
+}
