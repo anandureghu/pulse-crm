@@ -62,7 +62,7 @@ function Kpi({
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(255,255,255,0.55),transparent_55%)]" />
       <div className="relative">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums tracking-tight break-all">
+          <p className="font-display text-2xl sm:text-3xl font-bold text-gray-900 tabular-nums tracking-tight break-all">
             {value}
           </p>
           {pulse && Number(value) > 0 && (
@@ -467,19 +467,19 @@ export default function Dashboard() {
             <Panel title="Pipeline snapshot">
               <div className="grid grid-cols-2 gap-3">
                 <Link to="/pipeline" className="rounded-xl p-3 bg-gradient-to-br from-slate-50 to-gray-100 border border-gray-100">
-                  <p className="text-xl font-bold text-gray-900 tabular-nums">{openEnquiries}</p>
+                  <p className="font-display text-xl font-bold text-gray-900 tabular-nums">{openEnquiries}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Open enquiries</p>
                 </Link>
                 <Link to="/followups" className="rounded-xl p-3 bg-gradient-to-br from-amber-50 to-yellow-100/60 border border-amber-100/60">
-                  <p className="text-xl font-bold text-gray-900 tabular-nums">{pending.length}</p>
+                  <p className="font-display text-xl font-bold text-gray-900 tabular-nums">{pending.length}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Pending follow-ups</p>
                 </Link>
                 <Link to="/inbox" className="rounded-xl p-3 bg-gradient-to-br from-rose-50 to-pink-100/50 border border-rose-100/60">
-                  <p className="text-xl font-bold text-gray-900 tabular-nums">{unreadInbox}</p>
+                  <p className="font-display text-xl font-bold text-gray-900 tabular-nums">{unreadInbox}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Unread messages</p>
                 </Link>
                 <Link to="/analytics" className="rounded-xl p-3 bg-gradient-to-br from-violet-50 to-purple-100/50 border border-violet-100/60">
-                  <p className="text-xl font-bold text-gray-900 tabular-nums">{dealsWon}</p>
+                  <p className="font-display text-xl font-bold text-gray-900 tabular-nums">{dealsWon}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Deals won</p>
                 </Link>
               </div>

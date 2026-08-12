@@ -69,7 +69,7 @@ function KpiCard({
       className={`relative overflow-hidden rounded-2xl border border-white/60 p-4 shadow-sm transition-transform hover:-translate-y-0.5 ${accent}`}
     >
       <div className="absolute inset-0 opacity-40 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white via-transparent to-transparent pointer-events-none" />
-      <p className="text-xl sm:text-2xl font-bold text-gray-900 tabular-nums relative break-all">{value}</p>
+      <p className="font-display text-xl sm:text-2xl font-bold text-gray-900 tabular-nums relative break-all">{value}</p>
       <p className="text-sm text-gray-600 mt-1 relative">{label}</p>
       <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 relative">
         {delta !== undefined ? <DeltaBadge delta={delta ?? null} /> : <span />}
@@ -540,7 +540,7 @@ export default function Analytics() {
                           background: `linear-gradient(135deg, ${s.gradient?.[0]}22, ${s.gradient?.[1]}11)`,
                         }}
                       >
-                        <p className="text-xl font-bold text-gray-900 tabular-nums">{s.value}</p>
+                        <p className="font-display text-xl font-bold text-gray-900 tabular-nums">{s.value}</p>
                         <p className="text-xs text-gray-500 mt-0.5">{s.label}</p>
                       </Link>
                     ))}

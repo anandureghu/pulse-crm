@@ -1,4 +1,10 @@
 @import "tailwindcss";
+@import "cal-sans";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Cal Sans", ui-sans-serif, system-ui, sans-serif;
+}
 
 * {
   box-sizing: border-box;
@@ -6,8 +12,20 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   background: #f8fafc;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 #root {
