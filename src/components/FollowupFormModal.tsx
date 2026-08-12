@@ -161,8 +161,8 @@ export function FollowupFormModal({
     (mode === 'edit' || (!!customerId && !!latestEnquiry))
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-end sm:items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-5 w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/30 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto">
         <h3 className="font-semibold text-gray-800 mb-4">{title}</h3>
 
         <div className="space-y-3">
@@ -251,7 +251,7 @@ export function FollowupFormModal({
                   key={p.key}
                   type="button"
                   onClick={() => applyPreset(p.key)}
-                  className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                  className="text-xs min-h-9 px-2.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
                 >
                   {p.label}
                 </button>

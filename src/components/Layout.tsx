@@ -17,7 +17,11 @@ const navItems = [
   { to: '/settings', label: 'Settings', icon: '⚙️', adminOnly: false },
 ]
 
-const mobileNav = navItems.filter((i) => !i.adminOnly).slice(0, 5)
+/** Bottom bar: daily-use destinations + More opens the full drawer. */
+const MOBILE_NAV_PATHS = ['/inbox', '/customers', '/followups', '/pipeline'] as const
+const mobileNav = MOBILE_NAV_PATHS
+  .map((path) => navItems.find((i) => i.to === path))
+  .filter((i): i is (typeof navItems)[number] => Boolean(i))
 
 function InboxBadge({ count }: { count: number }) {
   if (count <= 0) return null
@@ -59,8 +63,9 @@ export default function Layout() {
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <img src="/logo.svg" alt="pulsrm" className="h-8" />
           <button
-            className="md:hidden text-gray-400 hover:text-gray-600 p-1"
+            className="md:hidden text-gray-400 hover:text-gray-600 p-2 min-w-10 min-h-10"
             onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
           >
             ✕
           </button>
@@ -104,7 +109,7 @@ export default function Layout() {
         <header className="md:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 flex-shrink-0">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="text-gray-600 hover:text-gray-900 p-1"
+            className="text-gray-600 hover:text-gray-900 p-2 -ml-1 min-w-10 min-h-10"
             aria-label="Open menu"
           >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -119,14 +124,14 @@ export default function Layout() {
         </main>
       </div>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10 flex">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10 flex safe-area-pb">
         {mobileNav.map(({ to, label, icon, badge }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
             className={({ isActive }) =>
-              `flex-1 flex flex-col items-center justify-center py-2 text-xs transition-colors relative ${
+              `flex-1 flex flex-col items-center justify-center min-h-14 py-1.5 text-[10px] sm:text-xs transition-colors relative ${
                 isActive ? 'text-green-600' : 'text-gray-400'
               }`
             }
@@ -139,9 +144,18 @@ export default function Layout() {
                 </span>
               )}
             </span>
-            <span className="truncate w-full text-center">{label}</span>
+            <span className="truncate w-full text-center px-0.5">{label === 'Follow-ups' ? 'Follow-ups' : label}</span>
           </NavLink>
         ))}
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          className="flex-1 flex flex-col items-center justify-center min-h-14 py-1.5 text-[10px] sm:text-xs text-gray-400"
+          aria-label="More"
+        >
+          <span className="text-xl leading-none mb-0.5">⋯</span>
+          <span>More</span>
+        </button>
       </nav>
 
     </div>

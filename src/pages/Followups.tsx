@@ -7,7 +7,7 @@ import { userLabel } from '../lib/db'
 import { toast } from '../components/Toast'
 import { FollowupFormModal } from '../components/FollowupFormModal'
 import { CustomerNotesModal } from '../components/CustomerNotesModal'
-import { formatPhoneDisplay, telHref } from '../lib/phone'
+import { telHref } from '../lib/phone'
 import type { EnrichedFollowup } from '../types'
 
 type MainTab = 'pending' | 'completed'
@@ -299,7 +299,7 @@ export default function Followups() {
       )}
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-4">
-        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
+        <div className="inline-flex w-full sm:w-auto rounded-lg border border-gray-200 p-0.5 bg-gray-50">
           {(
             [
               { key: 'mine' as const, label: 'Mine' },
@@ -310,7 +310,7 @@ export default function Followups() {
               key={s.key}
               type="button"
               onClick={() => setScope(s.key)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              className={`flex-1 sm:flex-none px-3 py-2 text-xs font-medium rounded-md transition-colors ${
                 scope === s.key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
@@ -323,13 +323,13 @@ export default function Followups() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search customer, note, assignee…"
-          className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+          className="flex-1 min-w-0 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
         />
 
         <select
           value={sort}
           onChange={(e) => setSort(e.target.value as SortKey)}
-          className="border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500"
+          className="w-full sm:w-auto border border-gray-200 rounded-lg px-2 py-2.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500"
         >
           <option value="due">Sort: due date</option>
           <option value="customer">Sort: customer</option>
@@ -343,7 +343,7 @@ export default function Followups() {
               setSelectMode((v) => !v)
               setSelected(new Set())
             }}
-            className={`text-xs px-3 py-2 rounded-lg border ${
+            className={`w-full sm:w-auto text-xs px-3 py-2.5 rounded-lg border ${
               selectMode
                 ? 'border-green-500 bg-green-50 text-green-700'
                 : 'border-gray-200 text-gray-600 hover:bg-gray-50'
@@ -360,7 +360,7 @@ export default function Followups() {
           <button
             type="button"
             onClick={bulkComplete}
-            className="text-xs px-2.5 py-1 rounded-lg bg-green-600 text-white hover:bg-green-700"
+            className="text-xs min-h-9 px-2.5 rounded-lg bg-green-600 text-white hover:bg-green-700"
           >
             Complete
           </button>
@@ -370,7 +370,7 @@ export default function Followups() {
               if (e.target.value) bulkReassign(e.target.value)
               e.target.value = ''
             }}
-            className="text-xs border border-green-200 rounded-lg px-2 py-1 bg-white"
+            className="text-xs border border-green-200 rounded-lg px-2 py-2 bg-white min-h-9"
           >
             <option value="">Reassign to…</option>
             {users.map((u) => (
@@ -380,7 +380,7 @@ export default function Followups() {
           <button
             type="button"
             onClick={() => setSelected(new Set())}
-            className="text-xs text-gray-500 hover:text-gray-700 ml-auto"
+            className="text-xs text-gray-500 hover:text-gray-700 min-h-9 px-2 sm:ml-auto"
           >
             Clear
           </button>
@@ -613,23 +613,26 @@ function PendingRow({
       } ${busy ? 'opacity-60' : ''}`}
     >
       {selectMode ? (
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={onToggleSelect}
-          className="mt-1 w-4 h-4 accent-green-600 cursor-pointer flex-shrink-0"
-          onClick={(e) => e.stopPropagation()}
-        />
+        <label className="mt-0.5 p-2 -m-1 flex items-center justify-center cursor-pointer flex-shrink-0">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={onToggleSelect}
+            className="w-5 h-5 accent-green-600 cursor-pointer"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </label>
       ) : (
-        <input
-          type="checkbox"
-          checked={false}
-          disabled={busy}
-          onChange={onComplete}
-          className="mt-1 w-4 h-4 accent-green-600 cursor-pointer flex-shrink-0"
-          title="Mark complete"
-          onClick={(e) => e.stopPropagation()}
-        />
+        <label className="mt-0.5 p-2 -m-1 flex items-center justify-center cursor-pointer flex-shrink-0" title="Mark complete">
+          <input
+            type="checkbox"
+            checked={false}
+            disabled={busy}
+            onChange={onComplete}
+            className="w-5 h-5 accent-green-600 cursor-pointer"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </label>
       )}
 
       <div className="flex-1 min-w-0">
@@ -645,21 +648,21 @@ function PendingRow({
           <span className="text-gray-600 font-medium">
             {formatDueDate(item.dueDate)} · {formatDueTime(item.dueDate)}
           </span>
-          <span>{assigneeLabel}</span>
+          <span className="truncate max-w-[140px]">{assigneeLabel}</span>
           {item.customerPhone && (
             <a
               href={telHref(item.customerPhone)}
               onClick={(e) => e.stopPropagation()}
               className="text-green-600 hover:text-green-700"
             >
-              Call {formatPhoneDisplay(item.customerPhone)}
+              Call
             </a>
           )}
           {item.customerId && (
             <Link
               to={`/customers/${item.customerId}`}
               onClick={(e) => e.stopPropagation()}
-              className="text-blue-600 hover:text-blue-700"
+              className="text-blue-600 hover:text-blue-700 hidden sm:inline"
             >
               Open customer
             </Link>
@@ -668,11 +671,11 @@ function PendingRow({
       </div>
 
       {!selectMode && (
-        <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             onClick={onViewNotes}
-            className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm"
+            className="text-xs font-semibold min-h-9 px-2.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm"
           >
             Notes
           </button>
@@ -680,13 +683,13 @@ function PendingRow({
             <button
               type="button"
               onClick={onToggleMenu}
-              className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 text-sm"
+              className="min-h-9 min-w-9 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 text-sm"
               aria-label="More actions"
             >
               ⋯
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-8 z-20 w-48 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-sm">
+              <div className="absolute right-0 bottom-10 sm:bottom-auto sm:top-10 z-20 w-48 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-sm">
                 <MenuItem onClick={onViewNotes}>View customer notes</MenuItem>
                 <MenuItem onClick={onEdit}>Edit / reschedule</MenuItem>
                 <MenuItem onClick={() => onSnooze('tomorrow')}>Snooze → tomorrow 9am</MenuItem>
@@ -741,11 +744,11 @@ function CompletedRow({
           <span>{assigneeLabel}</span>
         </div>
       </div>
-      <div className="flex flex-col gap-1 flex-shrink-0">
+      <div className="flex flex-wrap gap-1.5 flex-shrink-0">
         <button
           type="button"
           onClick={onViewNotes}
-          className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+          className="text-xs font-semibold min-h-9 px-2.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
         >
           Notes
         </button>
@@ -753,7 +756,7 @@ function CompletedRow({
           type="button"
           disabled={busy}
           onClick={onRestore}
-          className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+          className="text-xs min-h-9 px-2.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
           title="Move back to Pending"
         >
           Undo
@@ -762,7 +765,7 @@ function CompletedRow({
           type="button"
           disabled={busy}
           onClick={onDelete}
-          className="text-xs px-2 py-1 rounded-lg text-red-500 hover:bg-red-50"
+          className="text-xs min-h-9 px-2.5 rounded-lg text-red-500 hover:bg-red-50"
         >
           Delete
         </button>

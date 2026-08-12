@@ -37,11 +37,11 @@ export function CustomerNotesModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/30 flex items-end sm:items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/30 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl p-5 w-full max-w-md shadow-xl max-h-[85vh] flex flex-col"
+        className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full max-w-md shadow-xl max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -52,7 +52,8 @@ export function CustomerNotesModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0"
+            className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0 min-w-10 min-h-10 rounded-lg hover:bg-gray-100"
+            aria-label="Close"
           >
             ✕
           </button>

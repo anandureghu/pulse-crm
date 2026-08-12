@@ -41,21 +41,23 @@ export default function Calendar() {
 
   return (
     <div className="p-4 sm:p-6 max-w-full min-w-0">
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <h2 className="text-xl font-semibold text-gray-800">Calendar</h2>
-        <p className="text-xs text-gray-400 hidden sm:block">Pending scheduled follow-ups</p>
-        <div className="flex items-center gap-2 ml-auto">
-          <Link to="/followups" className="text-xs text-green-600 hover:text-green-700 mr-2">
+      <div className="flex flex-col gap-3 mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xl font-semibold text-gray-800">Calendar</h2>
+          <Link to="/followups" className="text-xs text-green-600 hover:text-green-700 min-h-9 inline-flex items-center">
             Open Follow-ups
           </Link>
-          <button type="button" onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">‹</button>
-          <span className="text-sm font-medium text-gray-700 w-32 text-center">{monthName} {year}</span>
-          <button type="button" onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">›</button>
+        </div>
+        <p className="text-xs text-gray-400 -mt-2">Pending scheduled follow-ups</p>
+        <div className="flex items-center justify-center gap-2">
+          <button type="button" onClick={prevMonth} className="min-h-10 min-w-10 rounded-lg hover:bg-gray-100 text-gray-500 text-lg" aria-label="Previous month">‹</button>
+          <span className="text-sm font-medium text-gray-700 min-w-[8.5rem] text-center">{monthName} {year}</span>
+          <button type="button" onClick={nextMonth} className="min-h-10 min-w-10 rounded-lg hover:bg-gray-100 text-gray-500 text-lg" aria-label="Next month">›</button>
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6 items-start">
-        <div className="bg-white rounded-xl border border-gray-200 p-4 w-full max-w-sm">
+      <div className="flex flex-col lg:flex-row gap-6 items-stretch lg:items-start">
+        <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 w-full max-w-md mx-auto lg:mx-0">
           <div className="grid grid-cols-7 gap-1 text-center text-xs text-gray-400 mb-2">
             {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
               <div key={d} className="py-1 font-medium">{d}</div>
@@ -73,7 +75,7 @@ export default function Calendar() {
                   key={day}
                   type="button"
                   onClick={() => setSelectedDay(isSelected ? null : day)}
-                  className={`h-9 flex flex-col items-center justify-center rounded-lg text-sm relative transition-colors ${
+                  className={`min-h-11 flex flex-col items-center justify-center rounded-lg text-sm relative transition-colors ${
                     isSelected
                       ? 'bg-green-600 text-white'
                       : isToday
@@ -83,7 +85,7 @@ export default function Calendar() {
                 >
                   {day}
                   {dayFollowups.length > 0 && (
-                    <span className={`absolute bottom-1 w-1 h-1 rounded-full ${isSelected ? 'bg-white' : 'bg-green-500'}`} />
+                    <span className={`absolute bottom-1.5 w-1 h-1 rounded-full ${isSelected ? 'bg-white' : 'bg-green-500'}`} />
                   )}
                 </button>
               )
@@ -92,7 +94,7 @@ export default function Calendar() {
         </div>
 
         {selectedDay && (
-          <div className="flex-1 w-full bg-white rounded-xl border border-gray-200 p-4">
+          <div className="flex-1 w-full bg-white rounded-xl border border-gray-200 p-4 min-w-0">
             <h3 className="font-semibold text-gray-700 mb-3">
               {monthName} {selectedDay} — Follow-ups ({selectedFollowups.length})
             </h3>
@@ -101,21 +103,23 @@ export default function Calendar() {
             ) : (
               <div className="space-y-2">
                 {selectedFollowups.map((f) => (
-                  <div key={f.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50">
-                    <input
-                      type="checkbox"
-                      disabled={busyId === f.id}
-                      onChange={() => handleComplete(f.id)}
-                      className="w-4 h-4 accent-green-600 cursor-pointer flex-shrink-0"
-                      title="Mark complete"
-                    />
+                  <div key={f.id} className="flex items-start gap-3 p-3 rounded-lg bg-gray-50">
+                    <label className="p-1 flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        disabled={busyId === f.id}
+                        onChange={() => handleComplete(f.id)}
+                        className="w-5 h-5 accent-green-600 cursor-pointer"
+                        title="Mark complete"
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={() => f.customerId && navigate(`/customers/${f.customerId}`)}
                       className="flex-1 min-w-0 text-left"
                     >
                       <p className="text-sm font-medium text-gray-800 truncate hover:text-green-700">{f.customerName}</p>
-                      {f.note && <p className="text-xs text-gray-500">{f.note}</p>}
+                      {f.note && <p className="text-xs text-gray-500 line-clamp-2">{f.note}</p>}
                     </button>
                     <div className="text-right flex-shrink-0">
                       <p className="text-xs text-blue-500 font-medium">
@@ -124,7 +128,7 @@ export default function Calendar() {
                           : ''}
                       </p>
                       {f.customerId && (
-                        <Link to={`/customers/${f.customerId}`} className="text-xs text-gray-400 hover:text-green-600">
+                        <Link to={`/customers/${f.customerId}`} className="text-xs text-gray-400 hover:text-green-600 inline-flex min-h-8 items-center">
                           Open
                         </Link>
                       )}

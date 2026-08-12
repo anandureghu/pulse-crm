@@ -132,7 +132,7 @@ export default function CustomerDetail() {
       <div className="mb-4 md:mb-6 space-y-3">
         {/* Row 1: back + avatar + name */}
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/customers')} className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0">
+          <button onClick={() => navigate('/customers')} className="text-gray-400 hover:text-gray-600 text-sm flex-shrink-0 p-2 -ml-1 min-w-10 min-h-10" aria-label="Back">
             ←
           </button>
           <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0">
@@ -170,11 +170,11 @@ export default function CustomerDetail() {
 
         {/* Row 2: status + follow-up (full width on mobile) */}
         {latestEnquiry && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <select
               value={latestEnquiry.status}
               onChange={(e) => handleStatusChange(e.target.value)}
-              className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
@@ -182,7 +182,7 @@ export default function CustomerDetail() {
             </select>
             <button
               onClick={() => setShowFollowupForm(true)}
-              className="flex-shrink-0 bg-yellow-500 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-yellow-600"
+              className="flex-shrink-0 bg-yellow-500 text-white px-3 py-2.5 rounded-lg text-sm hover:bg-yellow-600 w-full sm:w-auto"
             >
               + Follow-up
             </button>
@@ -593,8 +593,8 @@ function CustomerFollowupsTab({
 
   return (
     <div className="max-w-lg w-full">
-      <div className="flex items-center justify-between gap-2 mb-4">
-        <div className="flex gap-1 border-b border-gray-200">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
+        <div className="flex gap-1 border-b border-gray-200 overflow-x-auto min-w-0 -mx-1 px-1">
           {(
             [
               { key: 'pending' as const, label: 'Pending', count: pending.length },
@@ -605,7 +605,7 @@ function CustomerFollowupsTab({
               key={t.key}
               type="button"
               onClick={() => setSubTab(t.key)}
-              className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${
+              className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${
                 subTab === t.key
                   ? 'border-green-600 text-green-700'
                   : 'border-transparent text-gray-500'
@@ -619,7 +619,7 @@ function CustomerFollowupsTab({
           <button
             type="button"
             onClick={onSchedule}
-            className="text-sm bg-yellow-500 text-white px-3 py-1.5 rounded-lg hover:bg-yellow-600 flex-shrink-0"
+            className="text-sm bg-yellow-500 text-white px-3 py-2.5 rounded-lg hover:bg-yellow-600 w-full sm:w-auto flex-shrink-0"
           >
             + Schedule
           </button>
@@ -666,20 +666,20 @@ function CustomerFollowupsTab({
                     )}
                   </p>
                 </div>
-                <div className="flex flex-col gap-1 flex-shrink-0">
+                <div className="flex flex-col sm:flex-row gap-1 flex-shrink-0">
                   {subTab === 'pending' ? (
-                    <button type="button" onClick={() => onEdit(f)} className="text-xs text-blue-600 hover:text-blue-700">
+                    <button type="button" onClick={() => onEdit(f)} className="text-xs min-h-9 px-3 rounded-lg border border-gray-200 text-blue-600 hover:bg-blue-50">
                       Edit
                     </button>
                   ) : (
-                    <button type="button" onClick={() => onUncomplete(f.id)} className="text-xs text-gray-600 hover:text-gray-800">
+                    <button type="button" onClick={() => onUncomplete(f.id)} className="text-xs min-h-9 px-3 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
                       Undo
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={() => { if (confirm('Delete this follow-up?')) onDelete(f.id) }}
-                    className="text-xs text-red-400 hover:text-red-600"
+                    className="text-xs min-h-9 px-3 rounded-lg text-red-500 hover:bg-red-50"
                   >
                     Delete
                   </button>
@@ -1284,7 +1284,7 @@ function PaymentsTab({
                 editingId === p.id ? 'border-green-400 ring-1 ring-green-100' : 'border-gray-200'
               }`}
             >
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-gray-800">
@@ -1303,18 +1303,18 @@ function PaymentsTab({
                   </div>
                   {p.notes && <p className="text-xs text-gray-500 mt-1">{p.notes}</p>}
                 </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
+                <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto justify-stretch sm:justify-end">
                   <button
                     type="button"
                     onClick={() => openEdit(p)}
-                    className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                    className="text-xs min-h-9 px-3 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex-1 sm:flex-none"
                   >
                     Edit
                   </button>
                   <button
                     type="button"
                     onClick={() => handleDelete(p)}
-                    className="text-xs px-2 py-1 rounded-lg text-red-500 hover:bg-red-50"
+                    className="text-xs min-h-9 px-3 rounded-lg text-red-500 hover:bg-red-50 flex-1 sm:flex-none"
                   >
                     Delete
                   </button>

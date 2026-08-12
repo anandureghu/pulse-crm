@@ -41,7 +41,7 @@ export function GradientBarChart({
           const g1 = d.gradient?.[1] ?? d.color ?? '#059669'
           return (
             <div key={d.key} className="flex-1 min-w-0 h-full flex flex-col justify-end items-center group">
-              <span className="text-[10px] font-semibold text-gray-600 mb-1 opacity-0 group-hover:opacity-100 transition-opacity truncate max-w-full">
+              <span className="text-[10px] font-semibold text-gray-600 mb-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity truncate max-w-full">
                 {fmt(d.value)}
               </span>
               <div className="w-full max-w-[48px] mx-auto relative flex-1 flex items-end">
@@ -118,7 +118,7 @@ export function GradientAreaChart({
 
   return (
     <div className="w-full overflow-x-auto">
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-[320px]" role="img">
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-0" role="img">
         <defs>
           <linearGradient id={`${id}-leads`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={colors.leads[0]} stopOpacity="0.45" />

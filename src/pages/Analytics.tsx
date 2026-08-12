@@ -69,11 +69,11 @@ function KpiCard({
       className={`relative overflow-hidden rounded-2xl border border-white/60 p-4 shadow-sm transition-transform hover:-translate-y-0.5 ${accent}`}
     >
       <div className="absolute inset-0 opacity-40 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white via-transparent to-transparent pointer-events-none" />
-      <p className="text-2xl font-bold text-gray-900 tabular-nums relative">{value}</p>
+      <p className="text-xl sm:text-2xl font-bold text-gray-900 tabular-nums relative break-all">{value}</p>
       <p className="text-sm text-gray-600 mt-1 relative">{label}</p>
-      <div className="mt-2 flex items-center justify-between gap-2 relative">
+      <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 relative">
         {delta !== undefined ? <DeltaBadge delta={delta ?? null} /> : <span />}
-        {hint && <span className="text-[10px] text-gray-400 truncate">{hint}</span>}
+        {hint && <span className="text-[10px] text-gray-400 whitespace-normal">{hint}</span>}
       </div>
     </div>
   )
@@ -289,8 +289,8 @@ export default function Analytics() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col lg:flex-row gap-2 mb-5">
-          <div className="inline-flex rounded-xl border border-gray-200/80 p-0.5 bg-white/80 shadow-sm overflow-x-auto">
+        <div className="flex flex-col gap-2 mb-5">
+          <div className="inline-flex w-full sm:w-auto rounded-xl border border-gray-200/80 p-0.5 bg-white/80 shadow-sm overflow-x-auto">
             {(
               [
                 { key: 'today' as const, label: 'Today' },
@@ -305,7 +305,7 @@ export default function Analytics() {
                 key={r.key}
                 type="button"
                 onClick={() => setRangeKey(r.key)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors ${
+                className={`flex-1 sm:flex-none px-3 py-2 text-xs font-medium rounded-lg whitespace-nowrap transition-colors ${
                   rangeKey === r.key
                     ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow'
                     : 'text-gray-500 hover:text-gray-800'
@@ -317,24 +317,24 @@ export default function Analytics() {
           </div>
 
           {rangeKey === 'custom' && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <input
                 type="date"
                 value={customFrom}
                 onChange={(e) => setCustomFrom(e.target.value)}
-                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                className="border border-gray-200 rounded-lg px-2 py-2 text-xs bg-white w-full min-w-0"
               />
-              <span className="text-xs text-gray-400">→</span>
+              <span className="text-xs text-gray-400 text-center hidden sm:inline">→</span>
               <input
                 type="date"
                 value={customTo}
                 onChange={(e) => setCustomTo(e.target.value)}
-                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                className="border border-gray-200 rounded-lg px-2 py-2 text-xs bg-white w-full min-w-0"
               />
             </div>
           )}
 
-          <div className="inline-flex rounded-xl border border-gray-200/80 p-0.5 bg-white/80 shadow-sm ml-auto">
+          <div className="inline-flex w-full sm:w-auto rounded-xl border border-gray-200/80 p-0.5 bg-white/80 shadow-sm">
             {(
               [
                 { key: 'all' as const, label: 'All team' },
@@ -345,7 +345,7 @@ export default function Analytics() {
                 key={s.key}
                 type="button"
                 onClick={() => setScope(s.key)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg ${
+                className={`flex-1 sm:flex-none px-3 py-2 text-xs font-medium rounded-lg ${
                   scope === s.key
                     ? 'bg-white text-gray-900 shadow-sm'
                     : 'text-gray-500 hover:text-gray-800'
@@ -568,7 +568,24 @@ export default function Analytics() {
                         }))}
                         height={200}
                       />
-                      <div className="mt-4 overflow-x-auto">
+                      {/* Mobile cards */}
+                      <div className="md:hidden space-y-2 mt-4">
+                        {team.map((t) => (
+                          <div key={t.key} className="rounded-xl border border-gray-100 p-3 bg-gradient-to-br from-white to-emerald-50/40">
+                            <p className="font-medium text-gray-800 truncate">{t.name}</p>
+                            <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                              <span className="text-gray-500">Leads <strong className="text-gray-800">{t.leads}</strong></span>
+                              <span className="text-gray-500">Open <strong className="text-gray-800">{t.open}</strong></span>
+                              <span className="text-gray-500">Won <strong className="text-emerald-700">{t.won}</strong></span>
+                              <span className="text-gray-500">Revenue <strong className="text-gray-800">₹{t.revenue.toLocaleString('en-IN')}</strong></span>
+                              <span className={`col-span-2 ${t.overdue ? 'text-rose-600' : 'text-gray-400'}`}>
+                                Overdue FU: <strong>{t.overdue}</strong>
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 overflow-x-auto hidden md:block">
                         <table className="w-full min-w-[560px] text-sm">
                           <thead>
                             <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
