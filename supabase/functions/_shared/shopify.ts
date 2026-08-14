@@ -185,10 +185,73 @@ export async function findShopifyCustomer(
 ): Promise<ShopifyCustomer | null> {
   const queryParts: string[] = [`phone:${phoneDigits}`]
   if (email?.trim()) queryParts.push(`email:${email.trim()}`)
-  const searchQ = encodeURIComponent(queryParts.join(' OR '))
+  const searchQ = queryParts.join(' OR ')
+
+  try {
+    const data = await shopifyGraphql<{
+      customers: {
+        nodes: Array<{
+          id: string
+          firstName?: string | null
+          lastName?: string | null
+          email?: string | null
+          phone?: string | null
+          defaultAddress?: {
+            address1?: string
+            address2?: string
+            city?: string
+            province?: string
+            zip?: string
+            countryCodeV2?: string
+            country?: string
+            firstName?: string
+            lastName?: string
+            phone?: string
+          } | null
+        }>
+      }
+    }>(cfg, `#graphql
+      query CustomerSearch($q: String!) {
+        customers(first: 5, query: $q) {
+          nodes {
+            id firstName lastName email phone
+            defaultAddress { address1 address2 city province zip countryCodeV2 country firstName lastName phone }
+          }
+        }
+      }
+    `, { q: searchQ })
+    const node = data.customers?.nodes?.[0]
+    if (!node) return null
+    const numericId = Number(fromShopifyGid(node.id))
+    const addr = node.defaultAddress
+    return {
+      id: Number.isFinite(numericId) ? numericId : 0,
+      first_name: node.firstName ?? undefined,
+      last_name: node.lastName ?? undefined,
+      email: node.email ?? undefined,
+      phone: node.phone ?? undefined,
+      default_address: addr
+        ? {
+            address1: addr.address1,
+            address2: addr.address2,
+            city: addr.city,
+            province: addr.province,
+            zip: addr.zip,
+            country_code: addr.countryCodeV2,
+            country: addr.country,
+            first_name: addr.firstName,
+            last_name: addr.lastName,
+            phone: addr.phone,
+          }
+        : undefined,
+    }
+  } catch (e) {
+    console.warn('GraphQL customer search failed, falling back to REST', e)
+  }
+
   const { data } = await shopifyFetch<{ customers: ShopifyCustomer[] }>(
     cfg,
-    `/customers/search.json?query=${searchQ}`,
+    `/customers/search.json?query=${encodeURIComponent(searchQ)}`,
   )
   return data.customers?.[0] ?? null
 }
@@ -247,8 +310,123 @@ export async function loadShopifyConfig(): Promise<ShopifyConfig> {
     clientId,
     clientSecret,
     accessToken: accessToken || undefined,
-    apiVersion: raw.apiVersion || '2024-10',
+    apiVersion: resolveApiVersion(raw.apiVersion),
   }
+}
+
+/** Current stable Admin API version (Aug 2026). 2024-10 is past Shopify's 12-month window. */
+export const SHOPIFY_API_VERSION = '2026-07'
+
+function resolveApiVersion(raw?: string): string {
+  const v = (raw ?? '').trim()
+  const m = v.match(/^(\d{4})-(\d{2})$/)
+  if (!m) return SHOPIFY_API_VERSION
+  const year = Number(m[1])
+  const month = Number(m[2])
+  // As of Aug 2026, versions older than 2025-10 are unsupported (404 / odd 403s).
+  if (year < 2025 || (year === 2025 && month < 10)) return SHOPIFY_API_VERSION
+  return v
+}
+
+export function shopifyGid(resource: string, id: number | string): string {
+  const raw = String(id)
+  if (raw.startsWith('gid://')) return raw
+  return `gid://shopify/${resource}/${raw}`
+}
+
+export function fromShopifyGid(gid: string | null | undefined): string | null {
+  if (!gid) return null
+  const id = gid.split('/').pop()
+  return id || null
+}
+
+/** ISO 3166-2 codes Shopify GraphQL expects for Indian provinceCode. */
+const IN_PROVINCE_CODES: Record<string, string> = {
+  'andaman and nicobar islands': 'AN',
+  'andhra pradesh': 'AP',
+  'arunachal pradesh': 'AR',
+  assam: 'AS',
+  bihar: 'BR',
+  chandigarh: 'CH',
+  chhattisgarh: 'CG',
+  'dadra and nagar haveli and daman and diu': 'DH',
+  'daman and diu': 'DH',
+  delhi: 'DL',
+  'nct of delhi': 'DL',
+  goa: 'GA',
+  gujarat: 'GJ',
+  haryana: 'HR',
+  'himachal pradesh': 'HP',
+  'jammu and kashmir': 'JK',
+  jharkhand: 'JH',
+  karnataka: 'KA',
+  kerala: 'KL',
+  ladakh: 'LA',
+  lakshadweep: 'LD',
+  'madhya pradesh': 'MP',
+  maharashtra: 'MH',
+  manipur: 'MN',
+  meghalaya: 'ML',
+  mizoram: 'MZ',
+  nagaland: 'NL',
+  odisha: 'OR',
+  orissa: 'OR',
+  puducherry: 'PY',
+  pondicherry: 'PY',
+  punjab: 'PB',
+  rajasthan: 'RJ',
+  sikkim: 'SK',
+  'tamil nadu': 'TN',
+  telangana: 'TS',
+  tripura: 'TR',
+  'uttar pradesh': 'UP',
+  uttarakhand: 'UT',
+  uttaranchal: 'UT',
+  'west bengal': 'WB',
+}
+
+export function toGraphqlMailingAddress(
+  customer: OrderCustomerDto,
+  phoneE164: string,
+): Record<string, string> {
+  const first = (customer.firstName || '').trim() || 'Customer'
+  const last = (customer.lastName || '').trim() || '.'
+  const countryRaw = (customer.country || 'IN').trim()
+  const upper = countryRaw.toUpperCase()
+  const isIN = upper === 'IN' || upper === 'INDIA'
+  const addr: Record<string, string> = {
+    firstName: first,
+    lastName: last,
+    address1: (customer.address1 || '').trim(),
+    city: (customer.city || '').trim(),
+    zip: (customer.zip || '').trim(),
+    phone: phoneE164,
+    countryCode: isIN ? 'IN' : upper.slice(0, 2),
+  }
+  const address2 = (customer.address2 || '').trim()
+  if (address2) addr.address2 = address2
+  const province = (customer.province || '').trim()
+  if (province) {
+    if (isIN) {
+      const code = IN_PROVINCE_CODES[province.toLowerCase()] || (province.length <= 3 ? province.toUpperCase() : '')
+      if (code) addr.provinceCode = code
+    } else if (province.length <= 3) {
+      addr.provinceCode = province.toUpperCase()
+    }
+  }
+  return addr
+}
+
+function shopifyErrorMessage(status: number, body: unknown, text: string, where: string): string {
+  const errMsg =
+    (body as { errors?: unknown })?.errors != null
+      ? JSON.stringify((body as { errors: unknown }).errors)
+      : text || `HTTP ${status}`
+  const hint =
+    status === 403
+      ? ' Confirm the app has write_orders, is installed on this shop, and the store plan is active. After changing scopes, reinstall the app. Dev Dashboard apps should create orders via GraphQL (not REST POST /orders.json).'
+      : ''
+  return `Shopify ${status} on ${where}: ${errMsg}.${hint}`
 }
 
 /** Exchange client credentials for a short-lived Admin API token (~24h). */
@@ -325,13 +503,54 @@ export async function shopifyFetch<T = unknown>(
   if (!res.ok) {
     // Token may have been revoked — clear cache so next call re-auths
     if (res.status === 401) tokenCache = null
-    const errMsg =
-      (body as { errors?: unknown })?.errors != null
-        ? JSON.stringify((body as { errors: unknown }).errors)
-        : text || res.statusText
-    throw new Error(`Shopify ${res.status}: ${errMsg}`)
+    throw new Error(shopifyErrorMessage(res.status, body, text, path))
   }
   return { data: body as T, link: res.headers.get('link') }
+}
+
+export async function shopifyGraphql<T = Record<string, unknown>>(
+  cfg: ShopifyConfig,
+  query: string,
+  variables?: Record<string, unknown>,
+): Promise<T> {
+  const token = await getAccessToken(cfg)
+  const res = await fetch(`${shopifyBase(cfg)}/graphql.json`, {
+    method: 'POST',
+    headers: {
+      'X-Shopify-Access-Token': token,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
+  })
+  const text = await res.text()
+  let body: unknown = null
+  try {
+    body = text ? JSON.parse(text) : null
+  } catch {
+    body = { raw: text }
+  }
+  if (!res.ok) {
+    if (res.status === 401) tokenCache = null
+    throw new Error(shopifyErrorMessage(res.status, body, text, 'graphql.json'))
+  }
+  const json = body as { data?: T; errors?: { message: string }[] }
+  if (json.errors?.length) {
+    throw new Error(`Shopify GraphQL: ${json.errors.map((e) => e.message).join('; ')}`)
+  }
+  if (!json.data) throw new Error('Shopify GraphQL: empty response')
+  return json.data
+}
+
+export async function shopifyAccessScopeHandles(cfg: ShopifyConfig): Promise<string[]> {
+  try {
+    const data = await shopifyGraphql<{
+      currentAppInstallation: { accessScopes: { handle: string }[] }
+    }>(cfg, `query { currentAppInstallation { accessScopes { handle } } }`)
+    return data.currentAppInstallation?.accessScopes?.map((s) => s.handle) ?? []
+  } catch {
+    return []
+  }
 }
 
 /** Parse Shopify Link header for next page URL */

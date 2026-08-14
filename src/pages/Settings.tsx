@@ -68,7 +68,7 @@ export default function Settings() {
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
   const [shopifyConfig, setShopifyConfig] = useState<ShopifyConfig>({
-    shopDomain: '', clientId: '', clientSecret: '', apiVersion: '2024-10',
+    shopDomain: '', clientId: '', clientSecret: '', apiVersion: '2026-07',
   })
   const [shopifySaved, setShopifySaved] = useState(false)
   const [shopifySaving, setShopifySaving] = useState(false)
@@ -126,7 +126,7 @@ export default function Settings() {
           shopDomain: d.shopDomain ?? '',
           clientId: d.clientId ?? '',
           clientSecret: d.clientSecret ?? '',
-          apiVersion: d.apiVersion ?? '2024-10',
+          apiVersion: d.apiVersion ?? '2026-07',
         })
       }
     })
@@ -691,7 +691,7 @@ supabase functions deploy`}</pre>
             <code className="bg-gray-100 px-1 rounded">write_customers</code>{' '}
             <code className="bg-gray-100 px-1 rounded">read_orders</code>{' '}
             <code className="bg-gray-100 px-1 rounded">write_orders</code>
-            . Install the app on your store first.
+            . Install the app on your store first. After changing scopes, reinstall. API versions older than 2025-10 are upgraded automatically.
           </p>
           <div className="space-y-4">
             <div>
@@ -730,7 +730,7 @@ supabase functions deploy`}</pre>
                 type="text"
                 value={shopifyConfig.apiVersion}
                 onChange={(e) => setShopifyConfig((c) => ({ ...c, apiVersion: e.target.value }))}
-                placeholder="2024-10"
+                placeholder="2026-07"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
               />
             </div>
