@@ -756,7 +756,7 @@ function FilesTab({
     fetchFiles()
 
     const channel = supabase
-      .channel(`customer_files:${customerId}`)
+      .channel(`customer_files:${customerId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_files', filter: `customer_id=eq.${customerId}` }, fetchFiles)
       .subscribe()
 
@@ -900,7 +900,7 @@ function CallLogsTab({
     fetchLogs()
 
     const channel = supabase
-      .channel(`call_logs:${customerId}`)
+      .channel(`call_logs:${customerId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'call_logs', filter: `customer_id=eq.${customerId}` }, fetchLogs)
       .subscribe()
 

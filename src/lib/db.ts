@@ -185,8 +185,9 @@ export function subscribeToEnquiriesByCustomer(
 
   fetch()
 
+  // Unique channel name — CustomerDetail + FollowupFormModal both subscribe
   const channel = supabase
-    .channel(`enquiries:${customerId}`)
+    .channel(`enquiries:${customerId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'enquiries', filter: `customer_id=eq.${customerId}` },
@@ -257,7 +258,7 @@ export function subscribeToMessages(
   fetch()
 
   const channel = supabase
-    .channel(`messages:${conversationId}`)
+    .channel(`messages:${conversationId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
@@ -328,7 +329,7 @@ export function subscribeToNotes(enquiryId: string, onData: (notes: Note[]) => v
   fetch()
 
   const channel = supabase
-    .channel(`notes:${enquiryId}`)
+    .channel(`notes:${enquiryId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'notes', filter: `enquiry_id=eq.${enquiryId}` },
@@ -389,7 +390,7 @@ export function subscribeToActivities(
   fetch()
 
   const channel = supabase
-    .channel(`activities:${enquiryId}`)
+    .channel(`activities:${enquiryId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'activities', filter: `enquiry_id=eq.${enquiryId}` },
@@ -435,7 +436,7 @@ export function subscribeToFollowups(
   fetch()
 
   const channel = supabase
-    .channel(`followups:${assignedTo}`)
+    .channel(`followups:${assignedTo}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'followups' }, fetch)
     .subscribe()
 
