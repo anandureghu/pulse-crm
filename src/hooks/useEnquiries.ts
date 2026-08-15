@@ -19,12 +19,21 @@ export function useEnquiries() {
 
 export function useEnquiriesByCustomer(customerId: string) {
   const [enquiries, setEnquiries] = useState<Enquiry[]>([])
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (!customerId) return
-    const unsub = subscribeToEnquiriesByCustomer(customerId, setEnquiries)
+    if (!customerId) {
+      setEnquiries([])
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    const unsub = subscribeToEnquiriesByCustomer(customerId, (data) => {
+      setEnquiries(data)
+      setLoading(false)
+    })
     return unsub
   }, [customerId])
 
-  return enquiries
+  return { enquiries, loading }
 }

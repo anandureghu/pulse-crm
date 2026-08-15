@@ -454,7 +454,23 @@ export default function Followups() {
       )}
 
       {showCreate && (
-        <FollowupFormModal mode="create" onClose={() => setShowCreate(false)} />
+        <FollowupFormModal
+          mode="create"
+          onClose={() => setShowCreate(false)}
+          onSaved={(dueDateIso) => {
+            setTab('pending')
+            if (dueDateIso) {
+              const key = dueDateKey(dueDateIso)
+              const todayKey = localDateKey()
+              if (key < todayKey) setPeriod('overdue')
+              else if (key === todayKey) setPeriod('today')
+              else setPeriod('upcoming')
+            } else {
+              setPeriod('upcoming')
+            }
+            setScope('all')
+          }}
+        />
       )}
       {editing && (
         <FollowupFormModal

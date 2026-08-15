@@ -114,8 +114,39 @@ export async function getCustomer(id: string): Promise<Customer | null> {
 
 // ── Enquiries ────────────────────────────────────────────────────────────────
 
-export async function createEnquiry(data: Omit<Enquiry, 'id' | 'createdAt'>) {
-  return supabase.from('enquiries').insert(toRow(data as Record<string, unknown>))
+export async function createEnquiry(
+  data: Omit<Enquiry, 'id' | 'createdAt'>
+): Promise<{ data: Enquiry | null; error: Error | null }> {
+  const { data: row, error } = await supabase
+    .from('enquiries')
+    .insert(toRow(data as Record<string, unknown>))
+    .select('*')
+    .single()
+  if (error || !row) return { data: null, error: error ?? new Error('Failed to create enquiry') }
+  return { data: fromRow<Enquiry>(row), error: null }
+}
+
+/** Latest enquiry for a customer, or a new new_lead if none exists (needed for follow-ups). */
+export async function ensureEnquiryForCustomer(
+  customerId: string,
+  assignedTo?: string | null
+): Promise<{ data: Enquiry | null; error: Error | null }> {
+  const { data: existing } = await supabase
+    .from('enquiries')
+    .select('*')
+    .eq('customer_id', customerId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (existing) return { data: fromRow<Enquiry>(existing), error: null }
+
+  return createEnquiry({
+    customerId,
+    status: 'new_lead',
+    stage: 'new_lead',
+    assignedTo: assignedTo ?? null,
+    value: 0,
+  })
 }
 
 export async function updateEnquiry(id: string, data: Partial<Enquiry>) {
@@ -154,8 +185,9 @@ export function subscribeToEnquiriesByCustomer(
 
   fetch()
 
+  // Unique channel name — CustomerDetail + FollowupFormModal both subscribe
   const channel = supabase
-    .channel(`enquiries:${customerId}`)
+    .channel(`enquiries:${customerId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'enquiries', filter: `customer_id=eq.${customerId}` },
@@ -226,7 +258,7 @@ export function subscribeToMessages(
   fetch()
 
   const channel = supabase
-    .channel(`messages:${conversationId}`)
+    .channel(`messages:${conversationId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
@@ -297,7 +329,7 @@ export function subscribeToNotes(enquiryId: string, onData: (notes: Note[]) => v
   fetch()
 
   const channel = supabase
-    .channel(`notes:${enquiryId}`)
+    .channel(`notes:${enquiryId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'notes', filter: `enquiry_id=eq.${enquiryId}` },
@@ -358,7 +390,7 @@ export function subscribeToActivities(
   fetch()
 
   const channel = supabase
-    .channel(`activities:${enquiryId}`)
+    .channel(`activities:${enquiryId}:${crypto.randomUUID()}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'activities', filter: `enquiry_id=eq.${enquiryId}` },
@@ -404,7 +436,7 @@ export function subscribeToFollowups(
   fetch()
 
   const channel = supabase
-    .channel(`followups:${assignedTo}`)
+    .channel(`followups:${assignedTo}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'followups' }, fetch)
     .subscribe()
 

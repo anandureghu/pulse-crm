@@ -48,7 +48,7 @@ export default function CustomerDetail() {
 
   const user = useAuthStore((s) => s.user)
   const users = useUsers()
-  const enquiries = useEnquiriesByCustomer(id ?? '')
+  const { enquiries } = useEnquiriesByCustomer(id ?? '')
   const latestEnquiry = enquiries[0] ?? null
   const selectedEnquiry = enquiries[selectedEnquiryIdx] ?? latestEnquiry
 
@@ -169,8 +169,8 @@ export default function CustomerDetail() {
         </div>
 
         {/* Row 2: status + follow-up (full width on mobile) */}
-        {latestEnquiry && (
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          {latestEnquiry ? (
             <select
               value={latestEnquiry.status}
               onChange={(e) => handleStatusChange(e.target.value)}
@@ -180,14 +180,17 @@ export default function CustomerDetail() {
                 <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
               ))}
             </select>
-            <button
-              onClick={() => setShowFollowupForm(true)}
-              className="flex-shrink-0 bg-yellow-500 text-white px-3 py-2.5 rounded-lg text-sm hover:bg-yellow-600 w-full sm:w-auto"
-            >
-              + Follow-up
-            </button>
-          </div>
-        )}
+          ) : (
+            <p className="flex-1 text-xs text-gray-400 self-center">No pipeline enquiry yet</p>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowFollowupForm(true)}
+            className="flex-shrink-0 bg-yellow-500 text-white px-3 py-2.5 rounded-lg text-sm hover:bg-yellow-600 w-full sm:w-auto"
+          >
+            + Follow-up
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -251,7 +254,7 @@ export default function CustomerDetail() {
           onDelete={removeFollowupItem}
           onEdit={setEditingFollowup}
           onSchedule={() => setShowFollowupForm(true)}
-          canSchedule={!!latestEnquiry}
+          canSchedule
         />
       )}
       {tab === 'files' && (
@@ -753,7 +756,7 @@ function FilesTab({
     fetchFiles()
 
     const channel = supabase
-      .channel(`customer_files:${customerId}`)
+      .channel(`customer_files:${customerId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_files', filter: `customer_id=eq.${customerId}` }, fetchFiles)
       .subscribe()
 
@@ -897,7 +900,7 @@ function CallLogsTab({
     fetchLogs()
 
     const channel = supabase
-      .channel(`call_logs:${customerId}`)
+      .channel(`call_logs:${customerId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'call_logs', filter: `customer_id=eq.${customerId}` }, fetchLogs)
       .subscribe()
 
