@@ -4,7 +4,7 @@ import { useEnquiriesByCustomer } from '../hooks/useEnquiries'
 import { useUsers } from '../hooks/useUsers'
 import { useCreateFollowup } from '../hooks/useCreateFollowup'
 import { useAuthStore } from '../store/authStore'
-import { userLabel } from '../lib/db'
+import { ensureEnquiryForCustomer, userLabel } from '../lib/db'
 import { toast } from './Toast'
 import type { EnrichedFollowup } from '../types'
 
@@ -17,7 +17,7 @@ interface FollowupFormModalProps {
   lockedCustomerName?: string
   editing?: EnrichedFollowup | null
   onClose: () => void
-  onSaved?: () => void
+  onSaved?: (dueDateIso?: string) => void
   onUpdate?: (
     id: string,
     data: { note: string; dueDate: string; assignedTo: string }
@@ -44,7 +44,11 @@ function tomorrowAtNine(): { date: string; time: string } {
   const d = new Date()
   d.setDate(d.getDate() + 1)
   d.setHours(9, 0, 0, 0)
-  return toLocalDateParts(d.toISOString())
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: '09:00',
+  }
 }
 
 export function FollowupFormModal({
@@ -77,7 +81,7 @@ export function FollowupFormModal({
   )
   const [saving, setSaving] = useState(false)
 
-  const enquiries = useEnquiriesByCustomer(customerId)
+  const { enquiries, loading: enquiriesLoading } = useEnquiriesByCustomer(customerId)
   const latestEnquiry = enquiries[0] ?? null
 
   const filteredCustomers = useMemo(() => {
@@ -104,9 +108,9 @@ export function FollowupFormModal({
     if (kind === 'plus3') d.setDate(d.getDate() + 3)
     if (kind === 'nextweek') d.setDate(d.getDate() + 7)
     d.setHours(9, 0, 0, 0)
-    const parts = toLocalDateParts(d.toISOString())
-    setDate(parts.date)
-    setTime(parts.time)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    setDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`)
+    setTime('09:00')
   }
 
   const handleSubmit = async () => {
@@ -130,24 +134,37 @@ export function FollowupFormModal({
         })
         if (ok) {
           toast('Follow-up updated', 'success')
-          onSaved?.()
+          onSaved?.(dt.toISOString())
           onClose()
         }
         return
       }
 
-      if (!latestEnquiry) {
-        toast('Customer needs an enquiry before scheduling', 'error')
+      if (!customerId) {
+        toast('Pick a customer', 'error')
         return
       }
 
-      const result = await create(latestEnquiry.id, note.trim(), dt, assignedTo)
+      let enquiryId = latestEnquiry?.id
+      if (!enquiryId) {
+        const { data: ensured, error: ensureError } = await ensureEnquiryForCustomer(
+          customerId,
+          assignedTo || user?.email || null
+        )
+        if (ensureError || !ensured) {
+          toast('Failed to prepare customer for follow-up', 'error')
+          return
+        }
+        enquiryId = ensured.id
+      }
+
+      const result = await create(enquiryId, note.trim(), dt, assignedTo)
       if ((result as { error?: unknown })?.error) {
         toast('Failed to schedule follow-up', 'error')
         return
       }
       toast('Follow-up scheduled', 'success')
-      onSaved?.()
+      onSaved?.(dt.toISOString())
       onClose()
     } finally {
       setSaving(false)
@@ -158,7 +175,7 @@ export function FollowupFormModal({
   const canSubmit =
     !!date &&
     !!assignedTo &&
-    (mode === 'edit' || (!!customerId && !!latestEnquiry))
+    (mode === 'edit' || !!customerId)
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
@@ -211,8 +228,10 @@ export function FollowupFormModal({
                   </div>
                 </>
               )}
-              {customerId && !latestEnquiry && enquiries.length === 0 && (
-                <p className="text-xs text-amber-600 mt-1">This customer has no enquiry yet.</p>
+              {customerId && !latestEnquiry && !enquiriesLoading && (
+                <p className="text-xs text-gray-500 mt-1">
+                  No pipeline enquiry yet — one will be created when you schedule.
+                </p>
               )}
             </div>
           )}
@@ -223,8 +242,10 @@ export function FollowupFormModal({
               <p className="text-sm font-medium text-gray-800">
                 {lockedCustomerName || editing?.customerName || '—'}
               </p>
-              {mode === 'create' && customerId && !latestEnquiry && (
-                <p className="text-xs text-amber-600 mt-1">This customer has no enquiry yet.</p>
+              {mode === 'create' && customerId && !latestEnquiry && !enquiriesLoading && (
+                <p className="text-xs text-gray-500 mt-1">
+                  No pipeline enquiry yet — one will be created when you schedule.
+                </p>
               )}
             </div>
           )}
