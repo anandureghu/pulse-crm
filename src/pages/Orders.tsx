@@ -94,6 +94,45 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'orders', label: 'Orders' },
 ]
 
+const ORDER_DRAFT_KEY = 'pulsrm_order_create_draft'
+
+interface OrderCreateDraft {
+  prompt: string
+  dto: OrderDto | null
+  tagsInput: string
+  selectedByLine: (number | null)[]
+}
+
+function loadOrderDraft(): OrderCreateDraft | null {
+  try {
+    const raw = sessionStorage.getItem(ORDER_DRAFT_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as OrderCreateDraft
+    if (typeof parsed?.prompt !== 'string') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveOrderDraft(draft: OrderCreateDraft) {
+  try {
+    const empty = !draft.prompt.trim() && !draft.dto
+    if (empty) sessionStorage.removeItem(ORDER_DRAFT_KEY)
+    else sessionStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify(draft))
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function clearOrderDraft() {
+  try {
+    sessionStorage.removeItem(ORDER_DRAFT_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 function priceKey(amount: number): string {
   return Number(amount).toFixed(2)
 }
@@ -132,16 +171,16 @@ async function invokeFunction<T>(name: string, body: unknown): Promise<T> {
 
 export default function Orders() {
   const [tab, setTab] = useState<Tab>('create')
-  const [prompt, setPrompt] = useState('')
-  const [dto, setDto] = useState<OrderDto | null>(null)
+  const [prompt, setPrompt] = useState(() => loadOrderDraft()?.prompt ?? '')
+  const [dto, setDto] = useState<OrderDto | null>(() => loadOrderDraft()?.dto ?? null)
   const [cache, setCache] = useState<ShopifyProductsCache | null>(null)
   /** Selected variant id per line index */
-  const [selectedByLine, setSelectedByLine] = useState<(number | null)[]>([])
+  const [selectedByLine, setSelectedByLine] = useState<(number | null)[]>(() => loadOrderDraft()?.selectedByLine ?? [])
   const [parsing, setParsing] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [creating, setCreating] = useState(false)
   const [recent, setRecent] = useState<ShopifyOrderRow[]>([])
-  const [tagsInput, setTagsInput] = useState('')
+  const [tagsInput, setTagsInput] = useState(() => loadOrderDraft()?.tagsInput ?? '')
   const [productSearch, setProductSearch] = useState('')
   const [formKey, setFormKey] = useState(0)
   const [syncingOrders, setSyncingOrders] = useState(false)
@@ -156,6 +195,7 @@ export default function Orders() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const resetCreateForm = () => {
+    clearOrderDraft()
     setPrompt('')
     setDto(null)
     setTagsInput('')
@@ -190,6 +230,10 @@ export default function Orders() {
     loadCache()
     loadRecent()
   }, [loadCache, loadRecent])
+
+  useEffect(() => {
+    saveOrderDraft({ prompt, dto, tagsInput, selectedByLine })
+  }, [prompt, dto, tagsInput, selectedByLine])
 
   const allProducts = useMemo(() => {
     if (!cache?.byPrice) return []
@@ -230,6 +274,7 @@ export default function Orders() {
       setSelectedByLine([])
       return
     }
+    if (!cache?.byPrice) return
     setSelectedByLine((prev) =>
       lineItems.map((li, i) => {
         const matches = lineMatches[i] ?? []
@@ -531,13 +576,25 @@ export default function Orders() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
               />
             </div>
-            <button
-              onClick={handleParse}
-              disabled={parsing}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
-            >
-              {parsing ? 'Parsing…' : 'Parse with AI'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleParse}
+                disabled={parsing}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+              >
+                {parsing ? 'Parsing…' : 'Parse with AI'}
+              </button>
+              {(prompt.trim() || dto) && (
+                <button
+                  type="button"
+                  onClick={resetCreateForm}
+                  disabled={parsing || creating}
+                  className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
           {dto && (
@@ -750,13 +807,23 @@ export default function Orders() {
                 })}
               </div>
 
-              <button
-                onClick={handleCreate}
-                disabled={creating || !allLinesReady}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
-              >
-                {creating ? 'Creating…' : 'Create Shopify order'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleCreate}
+                  disabled={creating || !allLinesReady}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+                >
+                  {creating ? 'Creating…' : 'Create Shopify order'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetCreateForm}
+                  disabled={creating}
+                  className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -55,6 +55,8 @@ function BootSplash({ children }: { children: React.ReactNode }) {
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, member } = useAuthStore()
+  // Already signed in — keep pages mounted across token refresh / tab focus
+  if (user && member === true) return <>{children}</>
   if (loading || member === null) {
     return <SplashScreen ready={false} />
   }
@@ -73,15 +75,21 @@ export default function App() {
     let cancelled = false
 
     const applySession = async (user: import('@supabase/supabase-js').User | null) => {
-      setUser(user)
       if (!user) {
+        setUser(null)
         setRole(null)
         setMember(false)
         setLoading(false)
         return
       }
 
-      setMember(null)
+      const prev = useAuthStore.getState()
+      const keepMounted = prev.member === true && prev.user?.id === user.id
+      setUser(user)
+      // Tab focus / TOKEN_REFRESHED must not set member=null — that unmounts the
+      // app and wipes in-progress forms (e.g. order prompt).
+      if (!keepMounted) setMember(null)
+
       const role = await resolveMembership(user.id)
       if (cancelled) return
       if (!role) {
@@ -94,7 +102,7 @@ export default function App() {
       setRole(role)
       setMember(true)
       setLoading(false)
-      requestNotificationPermission().catch(() => {})
+      if (!keepMounted) requestNotificationPermission().catch(() => {})
     }
 
     supabase.auth.getSession().then(({ data: { session } }) => {

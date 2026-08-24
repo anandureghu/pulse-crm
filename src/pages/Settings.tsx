@@ -12,7 +12,6 @@ interface ShopifyConfig {
   shopDomain: string
   clientId: string
   clientSecret: string
-  apiVersion: string
 }
 
 interface EvolutionSettings {
@@ -68,7 +67,7 @@ export default function Settings() {
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
   const [shopifyConfig, setShopifyConfig] = useState<ShopifyConfig>({
-    shopDomain: '', clientId: '', clientSecret: '', apiVersion: '2026-07',
+    shopDomain: '', clientId: '', clientSecret: '',
   })
   const [shopifySaved, setShopifySaved] = useState(false)
   const [shopifySaving, setShopifySaving] = useState(false)
@@ -126,7 +125,6 @@ export default function Settings() {
           shopDomain: d.shopDomain ?? '',
           clientId: d.clientId ?? '',
           clientSecret: d.clientSecret ?? '',
-          apiVersion: d.apiVersion ?? '2026-07',
         })
       }
     })
@@ -691,7 +689,7 @@ supabase functions deploy`}</pre>
             <code className="bg-gray-100 px-1 rounded">write_customers</code>{' '}
             <code className="bg-gray-100 px-1 rounded">read_orders</code>{' '}
             <code className="bg-gray-100 px-1 rounded">write_orders</code>
-            . Install the app on your store first. After changing scopes, reinstall. API versions older than 2025-10 are upgraded automatically.
+            . Install the app on your store first. After changing scopes, reinstall.
           </p>
           <div className="space-y-4">
             <div>
@@ -721,16 +719,6 @@ supabase functions deploy`}</pre>
                 value={shopifyConfig.clientSecret}
                 onChange={(e) => setShopifyConfig((c) => ({ ...c, clientSecret: e.target.value }))}
                 placeholder="From Dev Dashboard → Settings"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">API version</label>
-              <input
-                type="text"
-                value={shopifyConfig.apiVersion}
-                onChange={(e) => setShopifyConfig((c) => ({ ...c, apiVersion: e.target.value }))}
-                placeholder="2026-07"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
               />
             </div>

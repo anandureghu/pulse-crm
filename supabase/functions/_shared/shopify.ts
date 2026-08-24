@@ -168,7 +168,7 @@ interface ShopifyAddress {
 }
 
 interface ShopifyCustomer {
-  id: number
+  id: number | string
   first_name?: string
   last_name?: string
   email?: string
@@ -222,10 +222,10 @@ export async function findShopifyCustomer(
     `, { q: searchQ })
     const node = data.customers?.nodes?.[0]
     if (!node) return null
-    const numericId = Number(fromShopifyGid(node.id))
+    const idStr = fromShopifyGid(node.id)
     const addr = node.defaultAddress
     return {
-      id: Number.isFinite(numericId) ? numericId : 0,
+      id: idStr && /^\d+$/.test(idStr) ? idStr : node.id,
       first_name: node.firstName ?? undefined,
       last_name: node.lastName ?? undefined,
       email: node.email ?? undefined,
@@ -310,23 +310,12 @@ export async function loadShopifyConfig(): Promise<ShopifyConfig> {
     clientId,
     clientSecret,
     accessToken: accessToken || undefined,
-    apiVersion: resolveApiVersion(raw.apiVersion),
+    apiVersion: SHOPIFY_API_VERSION,
   }
 }
 
-/** Current stable Admin API version (Aug 2026). 2024-10 is past Shopify's 12-month window. */
+/** Current stable Admin API version. Not configurable in Settings. */
 export const SHOPIFY_API_VERSION = '2026-07'
-
-function resolveApiVersion(raw?: string): string {
-  const v = (raw ?? '').trim()
-  const m = v.match(/^(\d{4})-(\d{2})$/)
-  if (!m) return SHOPIFY_API_VERSION
-  const year = Number(m[1])
-  const month = Number(m[2])
-  // As of Aug 2026, versions older than 2025-10 are unsupported (404 / odd 403s).
-  if (year < 2025 || (year === 2025 && month < 10)) return SHOPIFY_API_VERSION
-  return v
-}
 
 export function shopifyGid(resource: string, id: number | string): string {
   const raw = String(id)
