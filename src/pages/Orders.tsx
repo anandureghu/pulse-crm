@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { toast } from '../components/Toast'
 import { formatPhoneDisplay } from '../lib/phone'
+import { printPackingSlip, packingSlipHtml, type PackingSlipData } from '../lib/packingSlip'
 
 interface CachedVariant {
   variantId: number
@@ -193,6 +194,8 @@ export default function Orders() {
   const [editNote, setEditNote] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [slip, setSlip] = useState<PackingSlipData | null>(null)
+  const [slipLoadingId, setSlipLoadingId] = useState<string | null>(null)
 
   const resetCreateForm = () => {
     clearOrderDraft()
@@ -462,6 +465,24 @@ export default function Orders() {
       toast((e as Error).message, 'error')
     } finally {
       setSavingEdit(false)
+    }
+  }
+
+  const handlePackingSlip = async (row: ShopifyOrderRow) => {
+    if (!row.shopify_order_id) {
+      toast('No Shopify order id to load a packing slip', 'error')
+      return
+    }
+    setSlipLoadingId(row.id)
+    try {
+      const data = await invokeFunction<PackingSlipData>('shopify-packing-slip', {
+        shopifyOrderId: row.shopify_order_id,
+      })
+      setSlip(data)
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setSlipLoadingId(null)
     }
   }
 
@@ -879,6 +900,43 @@ export default function Orders() {
         </div>
       )}
 
+      {slip && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setSlip(null)}>
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-800">Packing slip {slip.order.name}</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { printPackingSlip(slip) }
+                    catch (e) { toast((e as Error).message, 'error') }
+                  }}
+                  className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-green-700"
+                >
+                  Print
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSlip(null)}
+                  className="text-sm text-gray-500 hover:text-gray-700 px-2 py-1.5"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <iframe
+              title={`Packing slip ${slip.order.name}`}
+              className="w-full flex-1 min-h-[480px] bg-white rounded-b-xl"
+              srcDoc={packingSlipHtml(slip)}
+            />
+          </div>
+        </div>
+      )}
+
       {tab === 'orders' && (
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex items-center justify-between mb-3">
@@ -972,6 +1030,14 @@ export default function Orders() {
                       </td>
                       <td className="py-2 whitespace-nowrap">
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handlePackingSlip(row)}
+                            disabled={slipLoadingId === row.id}
+                            className="text-sm text-green-600 hover:text-green-700 disabled:opacity-50"
+                          >
+                            {slipLoadingId === row.id ? '…' : 'Packing slip'}
+                          </button>
                           <button
                             type="button"
                             onClick={() => openEdit(row)}
