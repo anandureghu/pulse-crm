@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useTenantStore } from '../store/tenantStore'
 import { toast } from '../components/Toast'
 import { formatPhoneDisplay } from '../lib/phone'
 
@@ -117,13 +118,19 @@ function pickBestVariant(matches: CachedVariant[], hint?: string | null): number
 
 async function invokeFunction<T>(name: string, body: unknown): Promise<T> {
   const { data: { session } } = await supabase.auth.getSession()
+  const tenant = useTenantStore.getState()
+  const payload = {
+    ...(body && typeof body === 'object' ? body as Record<string, unknown> : { value: body }),
+    organizationId: tenant.activeOrganizationId,
+    instanceId: tenant.activeInstanceId,
+  }
   const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session?.access_token}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`)
@@ -169,16 +176,25 @@ export default function Orders() {
   }, [])
 
   /** Only list orders that exist in Shopify (synced mirror). */
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const instanceId = useTenantStore((s) => s.activeInstanceId)
+
   const loadRecent = useCallback(async () => {
+    if (!organizationId || !instanceId) {
+      setRecent([])
+      return
+    }
     const { data } = await supabase
       .from('shopify_orders')
       .select('id, shopify_order_id, shopify_order_name, customer_name, phone, email, amount, tags, status, error, created_at')
+      .eq('organization_id', organizationId)
+      .eq('instance_id', instanceId)
       .not('shopify_order_id', 'is', null)
       .eq('status', 'created')
       .order('created_at', { ascending: false })
       .limit(100)
     setRecent((data as ShopifyOrderRow[]) ?? [])
-  }, [])
+  }, [organizationId, instanceId])
 
   const resyncOrders = useCallback(async () => {
     const res = await invokeFunction<{ synced: number; removed?: number }>('sync-shopify-orders', {})

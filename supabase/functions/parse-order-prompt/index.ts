@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
   const { data: { user }, error: authErr } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
   if (authErr || !user) return err('Unauthorized', 401)
 
-  let body: { prompt?: string }
+  let body: { prompt?: string; instanceId?: string }
   try {
     body = await req.json()
   } catch {
@@ -111,8 +111,22 @@ Deno.serve(async (req) => {
   const prompt = body.prompt?.trim()
   if (!prompt) return err('prompt required')
 
-  const { data: aiRow } = await supabase.from('settings').select('value').eq('key', 'ai_config').single()
-  const aiCfg = aiRow?.value as { apiKey?: string; model?: string } | null
+  let aiCfg: { apiKey?: string; model?: string } | null = null
+  if (body.instanceId) {
+    const { data: inst } = await supabase
+      .from('instances')
+      .select('settings')
+      .eq('id', body.instanceId)
+      .maybeSingle()
+    aiCfg = ((inst?.settings as Record<string, unknown> | null)?.ai_config ?? null) as {
+      apiKey?: string
+      model?: string
+    } | null
+  }
+  if (!aiCfg?.apiKey) {
+    const { data: aiRow } = await supabase.from('settings').select('value').eq('key', 'ai_config').maybeSingle()
+    aiCfg = aiRow?.value as { apiKey?: string; model?: string } | null
+  }
   if (!aiCfg?.apiKey) return err('OpenAI API key not configured in Settings', 400)
 
   const model = aiCfg.model ?? 'gpt-4o-mini'

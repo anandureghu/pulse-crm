@@ -1,19 +1,29 @@
 import { supabase } from './supabase'
 import { normalizePhoneForStorage } from './phone'
+import { requireTenantScope } from './tenant'
+import { selectActiveInstance, useTenantStore } from '../store/tenantStore'
 
-// ── Shared: load Evolution API config from settings table ─────────────────────
+type EvoCfg = { apiUrl: string; apiKey: string; activeInstance: string }
 
-async function loadEvoCfg(): Promise<{ apiUrl: string; apiKey: string; activeInstance: string }> {
-  const { data } = await supabase.from('settings').select('value').eq('key', 'evolution').single()
-  const cfg = data?.value as { apiUrl?: string; apiKey?: string; activeInstance?: string } | null
-  if (!cfg?.apiUrl || !cfg?.apiKey || !cfg?.activeInstance) {
-    throw new Error('Evolution API not configured. Go to Settings → save your API URL, Key, and select an active instance.')
+function loadEvoCfgFromActiveInstance(): EvoCfg {
+  const inst = selectActiveInstance(useTenantStore.getState())
+  if (!inst) {
+    throw new Error('No active instance selected.')
   }
-  return { apiUrl: cfg.apiUrl, apiKey: cfg.apiKey, activeInstance: cfg.activeInstance }
+  const evo = (inst.settings?.evolution ?? {}) as {
+    apiUrl?: string
+    apiKey?: string
+    activeInstance?: string
+  }
+  const instanceName = inst.evolutionInstanceName || evo.activeInstance || ''
+  if (!evo.apiUrl || !evo.apiKey || !instanceName) {
+    throw new Error('Evolution API not configured for this instance. Go to Settings and save API URL, Key, and link an Evolution instance.')
+  }
+  return { apiUrl: evo.apiUrl, apiKey: evo.apiKey, activeInstance: instanceName }
 }
 
-async function evoPost(path: string, body: unknown, cfg?: Awaited<ReturnType<typeof loadEvoCfg>>) {
-  const c = cfg ?? (await loadEvoCfg())
+async function evoPost(path: string, body: unknown, cfg?: EvoCfg) {
+  const c = cfg ?? loadEvoCfgFromActiveInstance()
   const base = c.apiUrl.replace(/\/$/, '')
   const res = await fetch(`${base}${path}`, {
     method: 'POST',
@@ -40,7 +50,9 @@ export async function sendMessageFn(body: {
   mediaUrl?: string
   mediaType?: string
 }): Promise<{ ok: boolean; messageId: string }> {
-  const cfg = await loadEvoCfg()
+  const scope = requireTenantScope()
+  if (!scope) throw new Error('No active organization/instance')
+  const cfg = loadEvoCfgFromActiveInstance()
 
   const { data: conv } = await supabase
     .from('conversations').select('customer_id').eq('id', body.conversationId).single()
@@ -76,6 +88,8 @@ export async function sendMessageFn(body: {
     media: body.mediaUrl ?? null,
     status: 'sent',
     timestamp: new Date().toISOString(),
+    organization_id: scope.organizationId,
+    instance_id: scope.instanceId,
   }, { onConflict: 'id', ignoreDuplicates: true })
 
   await supabase.from('conversations').update({
@@ -93,7 +107,7 @@ export async function fetchMediaBase64(
   msgType: string,
 ): Promise<string | null> {
   try {
-    const cfg = await loadEvoCfg()
+    const cfg = loadEvoCfgFromActiveInstance()
     const jidPhone = normalizePhoneForStorage(phone)
     const res = await evoPost(
       `/chat/getBase64FromMediaMessage/${cfg.activeInstance}`,
@@ -107,7 +121,6 @@ export async function fetchMediaBase64(
     )
     const base64 = res?.base64 as string | undefined
     if (!base64) return null
-    // Evolution returns plain base64 without the data: prefix — build a valid data URL
     if (base64.startsWith('data:')) return base64
     const mimeFallback =
       msgType === 'image' ? 'image/jpeg'
@@ -124,6 +137,7 @@ export async function fetchMediaBase64(
 // ── Assign enquiry (direct DB write) ─────────────────────────────────────────
 
 export async function assignEnquiryFn(body: { enquiryId: string; assignTo: string; customerId?: string }) {
+  const scope = requireTenantScope()
   const { data: current } = await supabase
     .from('enquiries')
     .select('status, customer_id')
@@ -133,7 +147,6 @@ export async function assignEnquiryFn(body: { enquiryId: string; assignTo: strin
   const enquiryPatch: Record<string, unknown> = {
     assigned_to: body.assignTo || null,
   }
-  // Move New Lead → Assigned in the pipeline when someone is assigned
   if (body.assignTo && current?.status === 'new_lead') {
     enquiryPatch.status = 'assigned'
     enquiryPatch.stage = 'assigned'
@@ -160,6 +173,9 @@ export async function assignEnquiryFn(body: { enquiryId: string; assignTo: strin
       ? `Enquiry assigned to ${body.assignTo}`
       : 'Enquiry unassigned',
     created_by: await currentUser(),
+    ...(scope
+      ? { organization_id: scope.organizationId, instance_id: scope.instanceId }
+      : {}),
   })
 
   return { ok: true }
@@ -168,6 +184,7 @@ export async function assignEnquiryFn(body: { enquiryId: string; assignTo: strin
 // ── Update enquiry status (direct DB write) ───────────────────────────────────
 
 export async function updateEnquiryStatusFn(body: { enquiryId: string; status: string }) {
+  const scope = requireTenantScope()
   const { error } = await supabase
     .from('enquiries')
     .update({ status: body.status, stage: body.status })
@@ -179,6 +196,9 @@ export async function updateEnquiryStatusFn(body: { enquiryId: string; status: s
     type: 'status_changed',
     description: `Status changed to ${body.status.replace(/_/g, ' ')}`,
     created_by: await currentUser(),
+    ...(scope
+      ? { organization_id: scope.organizationId, instance_id: scope.instanceId }
+      : {}),
   })
 
   return { ok: true }

@@ -30,6 +30,8 @@ interface CreateBody {
   /** @deprecated single-variant create — still accepted */
   variantId?: number
   prompt?: string
+  organizationId?: string
+  instanceId?: string
 }
 
 const ORDER_CREATE_MUTATION = `#graphql
@@ -132,7 +134,7 @@ Deno.serve(async (req) => {
   let cfg: ShopifyConfig | null = null
 
   try {
-    cfg = await loadShopifyConfig()
+    cfg = await loadShopifyConfig(body.instanceId)
 
     // Returning customer: fill missing address from Shopify before validating
     {

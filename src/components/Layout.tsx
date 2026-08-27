@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { useTenantStore } from '../store/tenantStore'
 import { useConversations } from '../hooks/useConversations'
 import { supabase } from '../lib/supabase'
+import TenantSwitcher from './TenantSwitcher'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊', adminOnly: false },
@@ -15,6 +17,7 @@ const navItems = [
   { to: '/analytics', label: 'Analytics', icon: '📉', adminOnly: false },
   { to: '/team', label: 'Team', icon: '👤', adminOnly: true },
   { to: '/settings', label: 'Settings', icon: '⚙️', adminOnly: false },
+  { to: '/admin', label: 'Admin', icon: '🛡️', platformAdminOnly: true },
 ]
 
 /** Bottom bar: daily-use destinations + More opens the full drawer. */
@@ -35,12 +38,25 @@ function InboxBadge({ count }: { count: number }) {
 export default function Layout() {
   const user = useAuthStore((s) => s.user)
   const role = useAuthStore((s) => s.role)
+  const isPlatformAdmin = useAuthStore((s) => s.isPlatformAdmin)
+  const activeOrganizationId = useTenantStore((s) => s.activeOrganizationId)
+  const activeInstanceId = useTenantStore((s) => s.activeInstanceId)
+  const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { conversations } = useConversations()
   const unreadTotal = useMemo(
     () => conversations.reduce((sum, c) => sum + (c.unreadCount > 0 ? c.unreadCount : 0), 0),
     [conversations],
   )
+
+  const visibleNav = navItems.filter((item) => {
+    if ('platformAdminOnly' in item && item.platformAdminOnly) return isPlatformAdmin
+    if (item.adminOnly) return role === 'admin'
+    return true
+  })
+
+  const isAdminRoute = location.pathname.startsWith('/admin')
+  const tenantReady = Boolean(activeOrganizationId && activeInstanceId) || isAdminRoute
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -58,7 +74,7 @@ export default function Layout() {
         bg-white border-r border-gray-200
         flex flex-col
         transform transition-transform duration-200 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:z-auto md:translate-x-0'}
       `}>
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <img src="/logo.svg" alt="pulsrm" className="h-8" />
@@ -71,8 +87,12 @@ export default function Layout() {
           </button>
         </div>
 
+        <div className="px-3 py-2 border-b border-gray-100">
+          <TenantSwitcher />
+        </div>
+
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-          {navItems.filter((item) => !item.adminOnly || role === 'admin').map(({ to, label, icon, badge }) => (
+          {visibleNav.map(({ to, label, icon, badge }) => (
             <NavLink
               key={to}
               to={to}
@@ -117,10 +137,27 @@ export default function Layout() {
             </svg>
           </button>
           <img src="/logo.svg" alt="pulsrm" className="h-7" />
+          <div className="ml-auto">
+            <TenantSwitcher />
+          </div>
+        </header>
+
+        <header className="hidden md:flex items-center justify-end gap-3 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0">
+          <TenantSwitcher />
         </header>
 
         <main className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden pb-16 md:pb-0">
-          <Outlet />
+          {!tenantReady ? (
+            <div className="p-8 max-w-md mx-auto text-center">
+              <h1 className="text-lg font-semibold text-gray-800 mb-2">Select organization & instance</h1>
+              <p className="text-sm text-gray-500 mb-4">
+                Choose an organization and WhatsApp instance above to load CRM data for that workspace.
+              </p>
+              <TenantSwitcher />
+            </div>
+          ) : (
+            <Outlet key={`${activeOrganizationId}:${activeInstanceId}`} />
+          )}
         </main>
       </div>
 

@@ -289,11 +289,27 @@ export function mergeCustomerFromShopify(
   }
 }
 
-export async function loadShopifyConfig(): Promise<ShopifyConfig> {
+export async function loadShopifyConfig(instanceId?: string | null): Promise<ShopifyConfig> {
   const supabase = makeServiceClient()
+
+  if (instanceId) {
+    const { data: inst } = await supabase
+      .from('instances')
+      .select('settings')
+      .eq('id', instanceId)
+      .maybeSingle()
+    const raw = (inst?.settings as Record<string, unknown> | null)?.shopify_config as
+      | Record<string, string>
+      | undefined
+    if (raw) return parseShopifyConfig(raw)
+  }
+
   const { data, error } = await supabase.from('settings').select('value').eq('key', 'shopify_config').single()
   if (error || !data?.value) throw new Error('Shopify not configured in Settings')
-  const raw = data.value as Record<string, string>
+  return parseShopifyConfig(data.value as Record<string, string>)
+}
+
+function parseShopifyConfig(raw: Record<string, string>): ShopifyConfig {
   const shopDomain = (raw.shopDomain ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '')
   const clientId = (raw.clientId ?? '').trim()
   const clientSecret = (raw.clientSecret ?? '').trim()

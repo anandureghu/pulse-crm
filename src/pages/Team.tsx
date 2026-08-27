@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
+import { useTenantStore } from '../store/tenantStore'
 import { toast } from '../components/Toast'
 import { formatPhoneDisplay } from '../lib/phone'
 
@@ -14,6 +15,8 @@ type TeamMember = {
 
 export default function Team() {
   const { user } = useAuthStore()
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const orgName = useTenantStore((s) => s.organizations.find((o) => o.id === s.activeOrganizationId)?.name)
   const [members, setMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
   const [showInvite, setShowInvite] = useState(false)
@@ -29,16 +32,39 @@ export default function Team() {
   const [memberSearch, setMemberSearch] = useState('')
 
   const load = async () => {
+    if (!organizationId) {
+      setMembers([])
+      setLoading(false)
+      return
+    }
     setLoading(true)
-    const { data } = await supabase.from('users').select('id, email, username, role, phone').order('email')
-    setMembers((data ?? []) as TeamMember[])
+    const { data } = await supabase
+      .from('organization_members')
+      .select('role, users(id, email, username, phone)')
+      .eq('organization_id', organizationId)
+    const list: TeamMember[] = (data ?? []).map((row) => {
+      const u = row.users as unknown as {
+        id: string
+        email: string
+        username: string | null
+        phone: string | null
+      }
+      return {
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        phone: u.phone,
+        role: row.role as 'admin' | 'sales',
+      }
+    }).sort((a, b) => a.email.localeCompare(b.email))
+    setMembers(list)
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [organizationId])
 
   const handleInvite = async () => {
-    if (!inviteEmail.trim()) return
+    if (!inviteEmail.trim() || !organizationId) return
     setInviting(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -50,12 +76,15 @@ export default function Team() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session?.access_token}`,
           },
-          body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+          body: JSON.stringify({
+            email: inviteEmail.trim(),
+            role: inviteRole,
+            organizationId,
+          }),
         }
       )
       const body = await res.json()
       if (!res.ok) { toast(body.error ?? 'Invite failed', 'error'); return }
-      // Save phone if provided — the user row is created by handle_new_user trigger
       if (invitePhone.trim() && body?.userId) {
         await supabase.from('users').update({ phone: invitePhone.trim() }).eq('id', body.userId)
       }
@@ -73,7 +102,12 @@ export default function Team() {
   }
 
   const handleRoleChange = async (memberId: string, role: 'admin' | 'sales') => {
-    const { error } = await supabase.from('users').update({ role }).eq('id', memberId)
+    if (!organizationId) return
+    const { error } = await supabase
+      .from('organization_members')
+      .update({ role })
+      .eq('organization_id', organizationId)
+      .eq('user_id', memberId)
     if (error) { toast('Failed to update role', 'error'); return }
     setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role } : m)))
     toast('Role updated', 'success')
@@ -98,7 +132,8 @@ export default function Team() {
   }
 
   const handleRemove = async (memberId: string, email: string) => {
-    if (!confirm(`Remove ${email} from the team? They will lose access immediately.`)) return
+    if (!organizationId) return
+    if (!confirm(`Remove ${email} from this organization?`)) return
     setRemoving(memberId)
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -110,7 +145,7 @@ export default function Team() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session?.access_token}`,
           },
-          body: JSON.stringify({ userId: memberId }),
+          body: JSON.stringify({ userId: memberId, organizationId }),
         }
       )
       const body = await res.json()
@@ -129,7 +164,9 @@ export default function Team() {
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="min-w-0">
           <h2 className="text-xl font-semibold text-gray-800">Team</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Invite teammates and manage their roles</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Members of {orgName ?? 'this organization'}
+          </p>
         </div>
         <button
           onClick={() => setShowInvite(true)}

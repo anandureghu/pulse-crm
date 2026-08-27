@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { useTenantStore, selectActiveInstance } from '../store/tenantStore'
+import { reloadInstancesForOrgs } from '../lib/tenant'
 
 interface AiConfig {
   apiKey: string
@@ -59,6 +61,11 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function Settings() {
+  const activeOrganizationId = useTenantStore((s) => s.activeOrganizationId)
+  const activeInstanceId = useTenantStore((s) => s.activeInstanceId)
+  const orgIds = useTenantStore((s) => s.organizations.map((o) => o.id))
+  const crmInstance = useTenantStore(selectActiveInstance)
+
   const [settings, setSettings] = useState<EvolutionSettings>({
     apiUrl: '', activeInstance: '', apiKey: '', webhookUrl: '',
   })
@@ -87,50 +94,56 @@ export default function Settings() {
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
-  // ── Load from Supabase ─────────────────────────────────────────────────────
+  const persistInstanceSettings = async (patch: {
+    evolution?: EvolutionSettings
+    ai_config?: AiConfig
+    shopify_config?: ShopifyConfig
+    evolutionInstanceName?: string | null
+    name?: string
+  }) => {
+    if (!activeInstanceId || !crmInstance) throw new Error('No active instance')
+    const nextSettings = {
+      ...crmInstance.settings,
+      ...(patch.evolution ? { evolution: patch.evolution } : {}),
+      ...(patch.ai_config ? { ai_config: patch.ai_config } : {}),
+      ...(patch.shopify_config ? { shopify_config: patch.shopify_config } : {}),
+    }
+    const row: Record<string, unknown> = { settings: nextSettings }
+    if (patch.evolutionInstanceName !== undefined) {
+      row.evolution_instance_name = patch.evolutionInstanceName
+    }
+    if (patch.name) row.name = patch.name
+    const { error: upErr } = await supabase.from('instances').update(row).eq('id', activeInstanceId)
+    if (upErr) throw upErr
+    await reloadInstancesForOrgs(orgIds)
+  }
+
+  // ── Load from active CRM instance ──────────────────────────────────────────
   useEffect(() => {
-    supabase.from('settings').select('value').eq('key', 'evolution').maybeSingle().then(({ data }) => {
-      if (data?.value) {
-        const d = data.value as {
-          apiUrl?: string
-          activeInstance?: string
-          instanceName?: string
-          apiKey?: string
-          webhookUrl?: string
-          displayNames?: Record<string, string>
-        }
-        setSettings({
-          apiUrl: d.apiUrl ?? '',
-          activeInstance: d.activeInstance ?? d.instanceName ?? '',
-          apiKey: d.apiKey ?? '',
-          webhookUrl: d.webhookUrl ?? '',
-          displayNames: d.displayNames ?? {},
-        })
-      }
+    if (!crmInstance) return
+    const evo = (crmInstance.settings.evolution ?? {}) as Partial<EvolutionSettings>
+    setSettings({
+      apiUrl: evo.apiUrl ?? '',
+      activeInstance: crmInstance.evolutionInstanceName ?? evo.activeInstance ?? '',
+      apiKey: evo.apiKey ?? '',
+      webhookUrl: evo.webhookUrl ?? '',
+      displayNames: evo.displayNames ?? {},
     })
-    supabase.from('settings').select('value').eq('key', 'ai_config').maybeSingle().then(({ data }) => {
-      if (data?.value) {
-        const d = data.value as Record<string, string | boolean>
-        setAiConfig({
-          apiKey: (d.apiKey as string) ?? '',
-          model: (d.model as string) ?? 'gpt-4o-mini',
-          systemPrompt: (d.systemPrompt as string) ?? '',
-          enabled: (d.enabled as boolean) ?? false,
-        })
-      }
+    const ai = (crmInstance.settings.ai_config ?? {}) as Partial<AiConfig>
+    setAiConfig({
+      apiKey: ai.apiKey ?? '',
+      model: ai.model ?? 'gpt-4o-mini',
+      systemPrompt: ai.systemPrompt ?? '',
+      enabled: ai.enabled ?? false,
     })
-    supabase.from('settings').select('value').eq('key', 'shopify_config').maybeSingle().then(({ data }) => {
-      if (data?.value) {
-        const d = data.value as unknown as Record<string, string>
-        setShopifyConfig({
-          shopDomain: d.shopDomain ?? '',
-          clientId: d.clientId ?? '',
-          clientSecret: d.clientSecret ?? '',
-          apiVersion: d.apiVersion ?? '2026-07',
-        })
-      }
+    const shop = (crmInstance.settings.shopify_config ?? {}) as Partial<ShopifyConfig>
+    setShopifyConfig({
+      shopDomain: shop.shopDomain ?? '',
+      clientId: shop.clientId ?? '',
+      clientSecret: shop.clientSecret ?? '',
+      apiVersion: shop.apiVersion ?? '2026-07',
     })
-  }, [])
+  }, [crmInstance])
 
   // ── Evolution API helper ───────────────────────────────────────────────────
   const evo = useCallback(async (method: string, path: string, body?: unknown) => {
@@ -213,9 +226,13 @@ export default function Settings() {
 
   // ── Save ───────────────────────────────────────────────────────────────────
   const handleSave = async () => {
-    await supabase.from('settings').upsert({ key: 'evolution', value: settings })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      await persistInstanceSettings({ evolution: settings })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      setError((e as Error).message)
+    }
   }
 
   const flash = (msg: string) => {
@@ -223,12 +240,20 @@ export default function Settings() {
     setTimeout(() => setSuccessMsg(null), 3000)
   }
 
-  // ── Switch active instance ─────────────────────────────────────────────────
+  // ── Link Evolution WA instance to this CRM instance ────────────────────────
   const switchInstance = async (name: string) => {
     const updated = { ...settings, activeInstance: name }
     setSettings(updated)
-    await supabase.from('settings').upsert({ key: 'evolution', value: updated })
-    flash(`Active instance switched to "${name}"`)
+    try {
+      await persistInstanceSettings({
+        evolution: updated,
+        evolutionInstanceName: name,
+        name,
+      })
+      flash(`Linked Evolution instance "${name}" to this workspace`)
+    } catch (e) {
+      setError((e as Error).message)
+    }
   }
 
   // ── Set webhook on instance ────────────────────────────────────────────────
@@ -262,15 +287,35 @@ export default function Settings() {
   // ── Create instance ────────────────────────────────────────────────────────
   const createInstance = async () => {
     if (!newInstanceName.trim()) return
-    setInstanceAction({ name: newInstanceName, op: 'create' })
+    if (!activeOrganizationId) {
+      setError('Select an organization first')
+      return
+    }
+    const name = newInstanceName.trim()
+    setInstanceAction({ name, op: 'create' })
     setError(null)
     try {
       await evo('POST', '/instance/create', {
-        instanceName: newInstanceName.trim(),
+        instanceName: name,
         integration: 'WHATSAPP-BAILEYS',
       })
+      // New CRM instance under active org, copying API credentials from current settings
+      const { error: insErr } = await supabase.from('instances').insert({
+        organization_id: activeOrganizationId,
+        name,
+        evolution_instance_name: name,
+        settings: {
+          evolution: { ...settings, activeInstance: name },
+          ai_config: aiConfig,
+          shopify_config: shopifyConfig,
+        },
+        active: true,
+      })
+      if (insErr) throw insErr
+      await reloadInstancesForOrgs(orgIds)
       setNewInstanceName('')
       setShowCreate(false)
+      flash(`Created CRM + Evolution instance "${name}" — switch to it in the header`)
       await loadInstances()
     } catch (e) {
       setError(`Create failed: ${(e as Error).message}`)
@@ -289,7 +334,16 @@ export default function Settings() {
       if (settings.activeInstance === name) {
         const updated = { ...settings, activeInstance: '' }
         setSettings(updated)
-        await supabase.from('settings').upsert({ key: 'evolution', value: updated })
+        await persistInstanceSettings({ evolution: updated, evolutionInstanceName: null })
+      }
+      // Soft-deactivate matching CRM instances in this org
+      if (activeOrganizationId) {
+        await supabase
+          .from('instances')
+          .update({ active: false, evolution_instance_name: null })
+          .eq('organization_id', activeOrganizationId)
+          .eq('evolution_instance_name', name)
+        await reloadInstancesForOrgs(orgIds)
       }
       await loadInstances()
     } catch (e) {
@@ -299,7 +353,7 @@ export default function Settings() {
     }
   }
 
-  // ── Rename instance (display name only, stored in settings table) ─────────
+  // ── Rename instance (display name only) ────────────────────────────────────
   const renameInstance = async (instanceName: string, displayName: string) => {
     const trimmed = displayName.trim()
     if (!trimmed) { setRenaming(null); return }
@@ -309,11 +363,12 @@ export default function Settings() {
         ...settingsRef.current,
         displayNames: { ...(settingsRef.current.displayNames ?? {}), [instanceName]: trimmed },
       }
-      await supabase.from('settings').upsert({ key: 'evolution', value: updated })
+      await persistInstanceSettings({ evolution: updated })
       setSettings(updated)
       setRenaming(null)
+      flash(`Renamed display for "${instanceName}"`)
     } catch (e) {
-      setError(`Rename failed: ${(e as Error).message}`)
+      setError((e as Error).message)
     } finally {
       setInstanceAction(null)
     }
@@ -377,27 +432,37 @@ export default function Settings() {
 
   const handleSaveShopify = async () => {
     setShopifySaving(true)
-    await supabase.from('settings').upsert({
-      key: 'shopify_config',
-      value: shopifyConfig as unknown as Record<string, unknown>,
-      updated_at: new Date().toISOString(),
-    })
-    setShopifySaving(false)
-    setShopifySaved(true)
-    setTimeout(() => setShopifySaved(false), 2000)
+    try {
+      await persistInstanceSettings({ shopify_config: shopifyConfig })
+      setShopifySaved(true)
+      setTimeout(() => setShopifySaved(false), 2000)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setShopifySaving(false)
+    }
   }
 
   const handleSaveAi = async () => {
     setAiSaving(true)
-    await supabase.from('settings').upsert({ key: 'ai_config', value: aiConfig as unknown as Record<string, unknown> })
-    setAiSaving(false)
-    setAiSaved(true)
-    setTimeout(() => setAiSaved(false), 2000)
+    try {
+      await persistInstanceSettings({ ai_config: aiConfig })
+      setAiSaved(true)
+      setTimeout(() => setAiSaved(false), 2000)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setAiSaving(false)
+    }
   }
 
   return (
     <div className="p-4 sm:p-6 max-w-full min-w-0">
       <h2 className="text-xl font-semibold text-gray-800 mb-6">Settings</h2>
+      <p className="text-sm text-gray-500 mb-4 max-w-2xl">
+        Configuring the active CRM instance
+        {crmInstance ? ` “${crmInstance.name}”` : ''}. Switch instances from the header.
+      </p>
       <div className="max-w-2xl space-y-5">
 
         {/* ── API Connection ── */}
@@ -581,7 +646,7 @@ export default function Settings() {
                           onClick={() => switchInstance(inst.instanceName)}
                           className="text-xs border border-green-500 text-green-600 px-2.5 py-1 rounded-lg hover:bg-green-50"
                         >
-                          Use
+                          Link
                         </button>
                       )}
                       {!isConnected && (

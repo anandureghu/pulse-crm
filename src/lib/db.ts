@@ -1,7 +1,12 @@
 import { supabase } from './supabase'
 import type { Customer, Enquiry, Conversation, Message, Note, Activity, Followup, EnrichedFollowup } from '../types'
+import type { TenantScope } from './tenant'
 
 type Unsubscribe = () => void
+
+function tenantCols(scope: TenantScope) {
+  return { organization_id: scope.organizationId, instance_id: scope.instanceId }
+}
 
 // ── camelCase ↔ snake_case mapping ───────────────────────────────────────────
 
@@ -25,37 +30,47 @@ function toRow(obj: Record<string, unknown>): Record<string, unknown> {
 
 // ── Customers ────────────────────────────────────────────────────────────────
 
-export async function getCustomerByPhone(phone: string): Promise<Customer | null> {
+export async function getCustomerByPhone(scope: TenantScope, phone: string): Promise<Customer | null> {
   const { data } = await supabase
     .from('customers')
     .select('*')
+    .eq('instance_id', scope.instanceId)
     .eq('phone', phone)
     .limit(1)
     .maybeSingle()
   return data ? fromRow<Customer>(data) : null
 }
 
-export async function createCustomer(data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>): Promise<Customer> {
+export async function createCustomer(
+  scope: TenantScope,
+  data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'organizationId' | 'instanceId'>
+): Promise<Customer> {
   const { data: row, error } = await supabase
     .from('customers')
-    .insert(toRow(data as Record<string, unknown>))
+    .insert({ ...toRow(data as Record<string, unknown>), ...tenantCols(scope) })
     .select('*')
     .single()
   if (error || !row) throw error ?? new Error('Failed to create customer')
   return fromRow<Customer>(row)
 }
 
-export async function ensureConversation(customerId: string): Promise<string> {
+export async function ensureConversation(scope: TenantScope, customerId: string): Promise<string> {
   const { data: existing } = await supabase
     .from('conversations')
     .select('id')
+    .eq('instance_id', scope.instanceId)
     .eq('customer_id', customerId)
     .maybeSingle()
   if (existing?.id) return existing.id as string
 
   const { data: created, error } = await supabase
     .from('conversations')
-    .insert({ customer_id: customerId, last_message: '', unread_count: 0 })
+    .insert({
+      customer_id: customerId,
+      last_message: '',
+      unread_count: 0,
+      ...tenantCols(scope),
+    })
     .select('id')
     .single()
   if (error || !created) throw error ?? new Error('Failed to create conversation')
@@ -66,13 +81,23 @@ export async function updateCustomer(id: string, data: Partial<Customer>) {
   return supabase.from('customers').update(toRow(data as Record<string, unknown>)).eq('id', id)
 }
 
-export function subscribeToCustomers(onData: (customers: Customer[]) => void): Unsubscribe {
+export function subscribeToCustomers(
+  scope: TenantScope,
+  onData: (customers: Customer[]) => void
+): Unsubscribe {
   const fetch = async () => {
     const [{ data: rows }, { data: enquiries }] = await Promise.all([
-      supabase.from('customers').select('*').order('created_at', { ascending: false }),
+      supabase
+        .from('customers')
+        .select('*')
+        .eq('organization_id', scope.organizationId)
+        .eq('instance_id', scope.instanceId)
+        .order('created_at', { ascending: false }),
       supabase
         .from('enquiries')
         .select('customer_id, assigned_to, created_at')
+        .eq('organization_id', scope.organizationId)
+        .eq('instance_id', scope.instanceId)
         .order('created_at', { ascending: false }),
     ])
 
@@ -115,11 +140,12 @@ export async function getCustomer(id: string): Promise<Customer | null> {
 // ── Enquiries ────────────────────────────────────────────────────────────────
 
 export async function createEnquiry(
-  data: Omit<Enquiry, 'id' | 'createdAt'>
+  scope: TenantScope,
+  data: Omit<Enquiry, 'id' | 'createdAt' | 'organizationId' | 'instanceId'>
 ): Promise<{ data: Enquiry | null; error: Error | null }> {
   const { data: row, error } = await supabase
     .from('enquiries')
-    .insert(toRow(data as Record<string, unknown>))
+    .insert({ ...toRow(data as Record<string, unknown>), ...tenantCols(scope) })
     .select('*')
     .single()
   if (error || !row) return { data: null, error: error ?? new Error('Failed to create enquiry') }
@@ -128,19 +154,21 @@ export async function createEnquiry(
 
 /** Latest enquiry for a customer, or a new new_lead if none exists (needed for follow-ups). */
 export async function ensureEnquiryForCustomer(
+  scope: TenantScope,
   customerId: string,
   assignedTo?: string | null
 ): Promise<{ data: Enquiry | null; error: Error | null }> {
   const { data: existing } = await supabase
     .from('enquiries')
     .select('*')
+    .eq('instance_id', scope.instanceId)
     .eq('customer_id', customerId)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (existing) return { data: fromRow<Enquiry>(existing), error: null }
 
-  return createEnquiry({
+  return createEnquiry(scope, {
     customerId,
     status: 'new_lead',
     stage: 'new_lead',
@@ -153,18 +181,23 @@ export async function updateEnquiry(id: string, data: Partial<Enquiry>) {
   return supabase.from('enquiries').update(toRow(data as Record<string, unknown>)).eq('id', id)
 }
 
-export function subscribeToEnquiries(onData: (enquiries: Enquiry[]) => void): Unsubscribe {
+export function subscribeToEnquiries(
+  scope: TenantScope,
+  onData: (enquiries: Enquiry[]) => void
+): Unsubscribe {
   const fetch = () =>
     supabase
       .from('enquiries')
       .select('*')
+      .eq('organization_id', scope.organizationId)
+      .eq('instance_id', scope.instanceId)
       .order('created_at', { ascending: false })
       .then(({ data }) => onData((data ?? []).map(fromRow<Enquiry>)))
 
   fetch()
 
   const channel = supabase
-    .channel(`enquiries:${crypto.randomUUID()}`)
+    .channel(`enquiries:${scope.instanceId}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, fetch)
     .subscribe()
 
@@ -214,19 +247,30 @@ export async function getConversationByCustomer(customerId: string): Promise<Con
   return data ? fromRow<Conversation>(data) : null
 }
 
-export async function createConversation(data: Omit<Conversation, 'id' | 'updatedAt'>) {
-  return supabase.from('conversations').insert(toRow(data as Record<string, unknown>))
+export async function createConversation(
+  scope: TenantScope,
+  data: Omit<Conversation, 'id' | 'updatedAt' | 'organizationId' | 'instanceId'>
+) {
+  return supabase.from('conversations').insert({
+    ...toRow(data as Record<string, unknown>),
+    ...tenantCols(scope),
+  })
 }
 
 export async function updateConversation(id: string, data: Partial<Conversation>) {
   return supabase.from('conversations').update(toRow(data as Record<string, unknown>)).eq('id', id)
 }
 
-export function subscribeToConversations(onData: (convs: Conversation[]) => void): Unsubscribe {
+export function subscribeToConversations(
+  scope: TenantScope,
+  onData: (convs: Conversation[]) => void
+): Unsubscribe {
   const fetch = () =>
     supabase
       .from('conversations')
       .select('*')
+      .eq('organization_id', scope.organizationId)
+      .eq('instance_id', scope.instanceId)
       .order('updated_at', { ascending: false })
       .then(({ data }) => onData((data ?? []).map(fromRow<Conversation>)))
 
@@ -234,7 +278,7 @@ export function subscribeToConversations(onData: (convs: Conversation[]) => void
 
   // Unique channel name — Layout + Inbox both subscribe; reusing 'conversations' breaks after subscribe()
   const channel = supabase
-    .channel(`conversations:${crypto.randomUUID()}`)
+    .channel(`conversations:${scope.instanceId}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, fetch)
     .subscribe()
 
@@ -269,8 +313,14 @@ export function subscribeToMessages(
   return () => { supabase.removeChannel(channel) }
 }
 
-export async function addMessage(data: Omit<Message, 'id'> & { id: string }) {
-  return supabase.from('messages').insert(toRow(data as Record<string, unknown>))
+export async function addMessage(
+  scope: TenantScope,
+  data: Omit<Message, 'id' | 'organizationId' | 'instanceId'> & { id: string }
+) {
+  return supabase.from('messages').insert({
+    ...toRow(data as Record<string, unknown>),
+    ...tenantCols(scope),
+  })
 }
 
 export async function updateMessageStatus(id: string, status: Message['status']) {
@@ -340,8 +390,14 @@ export function subscribeToNotes(enquiryId: string, onData: (notes: Note[]) => v
   return () => { supabase.removeChannel(channel) }
 }
 
-export async function addNote(data: Omit<Note, 'id' | 'createdAt'>) {
-  return supabase.from('notes').insert(toRow(data as Record<string, unknown>))
+export async function addNote(
+  scope: TenantScope,
+  data: Omit<Note, 'id' | 'createdAt' | 'organizationId' | 'instanceId'>
+) {
+  return supabase.from('notes').insert({
+    ...toRow(data as Record<string, unknown>),
+    ...tenantCols(scope),
+  })
 }
 
 export async function deleteNote(id: string) {
@@ -401,8 +457,14 @@ export function subscribeToActivities(
   return () => { supabase.removeChannel(channel) }
 }
 
-export async function logActivity(data: Omit<Activity, 'id' | 'createdAt'>) {
-  return supabase.from('activities').insert(toRow(data as Record<string, unknown>))
+export async function logActivity(
+  scope: TenantScope,
+  data: Omit<Activity, 'id' | 'createdAt' | 'organizationId' | 'instanceId'>
+) {
+  return supabase.from('activities').insert({
+    ...toRow(data as Record<string, unknown>),
+    ...tenantCols(scope),
+  })
 }
 
 // ── Follow-ups ────────────────────────────────────────────────────────────────
@@ -444,11 +506,16 @@ export function subscribeToFollowups(
 }
 
 /** All follow-ups (pending + completed) for the Follow-ups page tabs. */
-export function subscribeToAllFollowups(onData: (followups: Followup[]) => void): Unsubscribe {
+export function subscribeToAllFollowups(
+  scope: TenantScope,
+  onData: (followups: Followup[]) => void
+): Unsubscribe {
   const fetch = () =>
     supabase
       .from('followups')
       .select('*')
+      .eq('organization_id', scope.organizationId)
+      .eq('instance_id', scope.instanceId)
       .order('due_date', { ascending: true })
       .then(({ data }) => {
         onData(sortFollowups((data ?? []).map(fromRow<Followup>)))
@@ -457,7 +524,7 @@ export function subscribeToAllFollowups(onData: (followups: Followup[]) => void)
   fetch()
 
   const channel = supabase
-    .channel(`followups:${crypto.randomUUID()}`)
+    .channel(`followups:${scope.instanceId}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'followups' }, fetch)
     .subscribe()
 
@@ -533,8 +600,14 @@ export async function enrichFollowups(followups: Followup[]): Promise<EnrichedFo
   })
 }
 
-export async function createFollowup(data: Omit<Followup, 'id' | 'completedAt' | 'createdAt'>) {
-  return supabase.from('followups').insert(toRow(data as Record<string, unknown>))
+export async function createFollowup(
+  scope: TenantScope,
+  data: Omit<Followup, 'id' | 'completedAt' | 'createdAt' | 'organizationId' | 'instanceId'>
+) {
+  return supabase.from('followups').insert({
+    ...toRow(data as Record<string, unknown>),
+    ...tenantCols(scope),
+  })
 }
 
 export async function updateFollowup(
@@ -569,7 +642,25 @@ export async function deleteFollowup(id: string) {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
-export async function getUsers(): Promise<Array<{ id: string; email: string; username: string | null; role: string }>> {
+export async function getUsers(
+  organizationId?: string
+): Promise<Array<{ id: string; email: string; username: string | null; role: string }>> {
+  if (organizationId) {
+    const { data } = await supabase
+      .from('organization_members')
+      .select('role, users(id, email, username)')
+      .eq('organization_id', organizationId)
+    return (data ?? []).map((row) => {
+      const u = row.users as unknown as { id: string; email: string; username: string | null }
+      return {
+        id: u.id,
+        email: u.email,
+        username: u.username ?? null,
+        role: row.role as string,
+      }
+    }).sort((a, b) => a.email.localeCompare(b.email))
+  }
+
   const { data } = await supabase.from('users').select('id, email, username, role').order('email')
   return (data ?? []).map((u) => ({
     id: u.id as string,

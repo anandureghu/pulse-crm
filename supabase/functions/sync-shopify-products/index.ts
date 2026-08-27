@@ -34,7 +34,9 @@ Deno.serve(async (req) => {
   if (authErr || !user) return err('Unauthorized', 401)
 
   try {
-    const cfg = await loadShopifyConfig()
+    let body: { instanceId?: string } = {}
+    try { body = await req.json() } catch { /* optional */ }
+    const cfg = await loadShopifyConfig(body.instanceId)
     const byPrice: Record<string, CachedVariant[]> = {}
     let rawCount = 0
     let nextUrl: string | null = `/products.json?limit=250&fields=id,title,variants`

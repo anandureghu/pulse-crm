@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useAuthStore } from './store/authStore'
+import { useTenantStore } from './store/tenantStore'
+import { loadTenantContext } from './lib/tenant'
 import { requestNotificationPermission, showLocalNotification } from './lib/notifications'
 import ErrorBoundary from './components/ErrorBoundary'
 import InstallPWA from './components/InstallPWA'
@@ -22,25 +24,30 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Orders = lazy(() => import('./pages/Orders'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Team = lazy(() => import('./pages/Team'))
+const Admin = lazy(() => import('./pages/Admin'))
 
-async function resolveMembership(userId: string): Promise<'admin' | 'sales' | null> {
+async function resolveMembership(userId: string): Promise<{
+  hasProfile: boolean
+  isPlatformAdmin: boolean
+}> {
   const { data } = await supabase
     .from('users')
-    .select('role')
+    .select('id, is_platform_admin')
     .eq('id', userId)
     .maybeSingle()
 
-  if (data?.role === 'admin' || data?.role === 'sales') return data.role
-
-  // No CRM profile → not invited. Remove auth user and clear session.
-  try {
-    await supabase.functions.invoke('reject-uninvited')
-  } catch {
-    // ignore — still sign out locally
+  if (!data) {
+    try {
+      await supabase.functions.invoke('reject-uninvited')
+    } catch {
+      // ignore
+    }
+    sessionStorage.setItem('pulsrm_not_invited', '1')
+    await supabase.auth.signOut()
+    return { hasProfile: false, isPlatformAdmin: false }
   }
-  sessionStorage.setItem('pulsrm_not_invited', '1')
-  await supabase.auth.signOut()
-  return null
+
+  return { hasProfile: true, isPlatformAdmin: Boolean(data.is_platform_admin) }
 }
 
 function BootSplash({ children }: { children: React.ReactNode }) {
@@ -55,7 +62,8 @@ function BootSplash({ children }: { children: React.ReactNode }) {
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, member } = useAuthStore()
-  if (loading || member === null) {
+  const tenantReady = useTenantStore((s) => s.ready)
+  if (loading || member === null || (member && !tenantReady)) {
     return <SplashScreen ready={false} />
   }
   if (!user || !member) return <Navigate to="/login" replace />
@@ -67,7 +75,15 @@ function PageLoader() {
 }
 
 export default function App() {
-  const { setUser, setRole, setMember, setLoading } = useAuthStore()
+  const { setUser, setRole, setMember, setLoading, setIsPlatformAdmin } = useAuthStore()
+  const {
+    setOrganizations,
+    setInstances,
+    setActiveOrganizationId,
+    setActiveInstanceId,
+    setReady,
+    reset: resetTenant,
+  } = useTenantStore()
 
   useEffect(() => {
     let cancelled = false
@@ -76,23 +92,38 @@ export default function App() {
       setUser(user)
       if (!user) {
         setRole(null)
+        setIsPlatformAdmin(false)
         setMember(false)
+        resetTenant()
         setLoading(false)
         return
       }
 
       setMember(null)
-      const role = await resolveMembership(user.id)
+      setReady(false)
+      const { hasProfile, isPlatformAdmin } = await resolveMembership(user.id)
       if (cancelled) return
-      if (!role) {
+      if (!hasProfile) {
         setUser(null)
         setRole(null)
+        setIsPlatformAdmin(false)
         setMember(false)
+        resetTenant()
         setLoading(false)
         return
       }
-      setRole(role)
+
+      const tenant = await loadTenantContext(user.id)
+      if (cancelled) return
+
+      setIsPlatformAdmin(tenant.isPlatformAdmin || isPlatformAdmin)
+      setOrganizations(tenant.organizations)
+      setInstances(tenant.instances)
+      setActiveOrganizationId(tenant.organizationId)
+      setActiveInstanceId(tenant.instanceId)
+      setRole(tenant.orgRole)
       setMember(true)
+      setReady(true)
       setLoading(false)
       requestNotificationPermission().catch(() => {})
     }
@@ -109,7 +140,19 @@ export default function App() {
       cancelled = true
       subscription.unsubscribe()
     }
-  }, [setUser, setRole, setMember, setLoading])
+  }, [
+    setUser,
+    setRole,
+    setMember,
+    setLoading,
+    setIsPlatformAdmin,
+    setOrganizations,
+    setInstances,
+    setActiveOrganizationId,
+    setActiveInstanceId,
+    setReady,
+    resetTenant,
+  ])
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
@@ -149,6 +192,7 @@ export default function App() {
               <Route path="orders" element={<Suspense fallback={<PageLoader />}><Orders /></Suspense>} />
               <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
               <Route path="team" element={<Suspense fallback={<PageLoader />}><Team /></Suspense>} />
+              <Route path="admin" element={<Suspense fallback={<PageLoader />}><Admin /></Suspense>} />
             </Route>
           </Routes>
         </BrowserRouter>
