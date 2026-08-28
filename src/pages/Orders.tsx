@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { toast } from '../components/Toast'
 import { formatPhoneDisplay } from '../lib/phone'
 import { printPackingSlip, packingSlipHtml, type PackingSlipData } from '../lib/packingSlip'
+import { downloadCsv } from '../lib/analytics'
 
 interface CachedVariant {
   variantId: number
@@ -12,6 +13,19 @@ interface CachedVariant {
   sku: string
   price: string
   currency: string
+  vendor?: string
+  productType?: string
+  handle?: string
+  status?: string
+  tags?: string[]
+  description?: string
+  compareAtPrice?: string
+  barcode?: string
+  inventoryQuantity?: number
+  option1?: string
+  option2?: string
+  option3?: string
+  metafields?: Record<string, string>
 }
 
 interface ShopifyProductsCache {
@@ -153,6 +167,67 @@ function pickBestVariant(matches: CachedVariant[], hint?: string | null): number
   if (!hint?.trim()) return null
   const ranked = [...matches].sort((a, b) => scoreHint(b, hint) - scoreHint(a, hint))
   return scoreHint(ranked[0], hint) > 0 ? ranked[0].variantId : null
+}
+
+const PRODUCT_CSV_BASE_HEADERS = [
+  'Product ID',
+  'Variant ID',
+  'Product Title',
+  'Variant Title',
+  'SKU',
+  'Price',
+  'Currency',
+  'Vendor',
+  'Product Type',
+  'Handle',
+  'Status',
+  'Tags',
+  'Description',
+  'Compare At Price',
+  'Barcode',
+  'Inventory Quantity',
+  'Option 1',
+  'Option 2',
+  'Option 3',
+  'Synced At',
+] as const
+
+function exportProductsCsv(products: CachedVariant[], syncedAt: string | null) {
+  const metafieldKeys = new Set<string>()
+  for (const p of products) {
+    for (const key of Object.keys(p.metafields ?? {})) metafieldKeys.add(key)
+  }
+  const metaHeaders = [...metafieldKeys].sort()
+  const headers = [...PRODUCT_CSV_BASE_HEADERS, ...metaHeaders]
+
+  const rows = products.map((p) => {
+    const base: (string | number)[] = [
+      p.productId,
+      p.variantId,
+      p.title,
+      p.variantTitle === 'Default Title' ? 'Default' : p.variantTitle,
+      p.sku,
+      p.price,
+      p.currency,
+      p.vendor ?? '',
+      p.productType ?? '',
+      p.handle ?? '',
+      p.status ?? '',
+      (p.tags ?? []).join('; '),
+      p.description ?? '',
+      p.compareAtPrice ?? '',
+      p.barcode ?? '',
+      p.inventoryQuantity ?? '',
+      p.option1 ?? '',
+      p.option2 ?? '',
+      p.option3 ?? '',
+      syncedAt ?? '',
+    ]
+    return [...base, ...metaHeaders.map((k) => p.metafields?.[k] ?? '')]
+  })
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  downloadCsv(`products-${stamp}.csv`, headers, rows)
 }
 
 async function invokeFunction<T>(name: string, body: unknown): Promise<T> {
@@ -854,13 +929,24 @@ export default function Orders() {
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h3 className="font-semibold text-gray-700">Synced products</h3>
-            <input
-              type="search"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-              placeholder="Search title, SKU, price…"
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="search"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Search title, SKU, price…"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              {allProducts.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => exportProductsCsv(filteredProducts, cache?.syncedAt ?? null)}
+                  className="text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+                >
+                  Export CSV
+                </button>
+              )}
+            </div>
           </div>
           {allProducts.length === 0 ? (
             <p className="text-sm text-gray-400">
