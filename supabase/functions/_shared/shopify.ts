@@ -17,6 +17,20 @@ export interface CachedVariant {
   sku: string
   price: string
   currency: string
+  vendor?: string
+  productType?: string
+  handle?: string
+  status?: string
+  tags?: string[]
+  description?: string
+  compareAtPrice?: string
+  barcode?: string
+  inventoryQuantity?: number
+  option1?: string
+  option2?: string
+  option3?: string
+  /** Flat metafield map — keys like `product.namespace.key` or `variant.namespace.key`. */
+  metafields?: Record<string, string>
 }
 
 export interface ShopifyProductsCache {
