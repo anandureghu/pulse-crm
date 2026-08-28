@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>
@@ -27,6 +28,7 @@ function isIosSafari() {
 }
 
 export default function InstallPWA() {
+  const location = useLocation()
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
   const [showIosHint, setShowIosHint] = useState(false)
   // Session-only dismiss — refresh brings the banner back unless already installed
@@ -70,7 +72,8 @@ export default function InstallPWA() {
   }, [])
 
   const visible = !dismissed && !installed && (deferred !== null || showIosHint)
-  if (!visible) return null
+  const onAuthScreen = location.pathname === '/login' || location.pathname === '/set-password'
+  if (!visible || onAuthScreen) return null
 
   async function handleInstall() {
     if (deferred) {
