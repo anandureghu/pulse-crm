@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useAuthStore } from './store/authStore'
 import { requestNotificationPermission, showLocalNotification } from './lib/notifications'
@@ -53,10 +53,14 @@ function BootSplash({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function isPublicAuthPath(pathname: string) {
+  return pathname === '/login' || pathname === '/set-password'
+}
+
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, member } = useAuthStore()
   if (loading || member === null) {
-    return <SplashScreen ready={false} />
+    return <SplashScreen ready={!loading} />
   }
   if (!user || !member) return <Navigate to="/login" replace />
   return <>{children}</>
@@ -64,6 +68,41 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 function PageLoader() {
   return <div className="p-6 text-sm text-gray-400">Loading…</div>
+}
+
+function AppRoutes() {
+  const location = useLocation()
+  const publicAuth = isPublicAuthPath(location.pathname)
+
+  const routes = (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/set-password" element={<SetPassword />} />
+      <Route
+        path="/"
+        element={
+          <AuthGuard>
+            <Layout />
+          </AuthGuard>
+        }
+      >
+        <Route index element={<Suspense fallback={<PageLoader />}><Dashboard /></Suspense>} />
+        <Route path="inbox" element={<Suspense fallback={<PageLoader />}><Inbox /></Suspense>} />
+        <Route path="customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />
+        <Route path="customers/:id" element={<Suspense fallback={<PageLoader />}><CustomerDetail /></Suspense>} />
+        <Route path="pipeline" element={<Suspense fallback={<PageLoader />}><Pipeline /></Suspense>} />
+        <Route path="calendar" element={<Suspense fallback={<PageLoader />}><Calendar /></Suspense>} />
+        <Route path="followups" element={<Suspense fallback={<PageLoader />}><Followups /></Suspense>} />
+        <Route path="analytics" element={<Suspense fallback={<PageLoader />}><Analytics /></Suspense>} />
+        <Route path="orders" element={<Suspense fallback={<PageLoader />}><Orders /></Suspense>} />
+        <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
+        <Route path="team" element={<Suspense fallback={<PageLoader />}><Team /></Suspense>} />
+      </Route>
+    </Routes>
+  )
+
+  if (publicAuth) return routes
+  return <BootSplash>{routes}</BootSplash>
 }
 
 export default function App() {
@@ -124,35 +163,10 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Toaster />
-      <InstallPWA />
-      <BootSplash>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/set-password" element={<SetPassword />} />
-            <Route
-              path="/"
-              element={
-                <AuthGuard>
-                  <Layout />
-                </AuthGuard>
-              }
-            >
-              <Route index element={<Suspense fallback={<PageLoader />}><Dashboard /></Suspense>} />
-              <Route path="inbox" element={<Suspense fallback={<PageLoader />}><Inbox /></Suspense>} />
-              <Route path="customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />
-              <Route path="customers/:id" element={<Suspense fallback={<PageLoader />}><CustomerDetail /></Suspense>} />
-              <Route path="pipeline" element={<Suspense fallback={<PageLoader />}><Pipeline /></Suspense>} />
-              <Route path="calendar" element={<Suspense fallback={<PageLoader />}><Calendar /></Suspense>} />
-              <Route path="followups" element={<Suspense fallback={<PageLoader />}><Followups /></Suspense>} />
-              <Route path="analytics" element={<Suspense fallback={<PageLoader />}><Analytics /></Suspense>} />
-              <Route path="orders" element={<Suspense fallback={<PageLoader />}><Orders /></Suspense>} />
-              <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
-              <Route path="team" element={<Suspense fallback={<PageLoader />}><Team /></Suspense>} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
-      </BootSplash>
+      <BrowserRouter>
+        <InstallPWA />
+        <AppRoutes />
+      </BrowserRouter>
     </ErrorBoundary>
   )
 }
