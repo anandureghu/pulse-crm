@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { useTenantStore, selectActiveInstance } from '../store/tenantStore'
+import { useTenantStore, selectActiveInstance, selectOrgInstances } from '../store/tenantStore'
 import { reloadInstancesForOrgs } from '../lib/tenant'
 import { usePlatformEvolutionSettings } from '../hooks/usePlatformEvolutionSettings'
 
@@ -69,6 +69,7 @@ export default function Settings() {
   const activeOrganizationId = useTenantStore((s) => s.activeOrganizationId)
   const activeInstanceId = useTenantStore((s) => s.activeInstanceId)
   const orgIds = useTenantStore(useShallow((s) => s.organizations.map((o) => o.id)))
+  const orgCrmInstances = useTenantStore(useShallow(selectOrgInstances))
   const crmInstance = useTenantStore(selectActiveInstance)
   const { data: platformEvo } = usePlatformEvolutionSettings()
 
@@ -93,6 +94,13 @@ export default function Settings() {
     activeInstance: instanceEvo.activeInstance,
     displayNames: instanceEvo.displayNames,
   }), [platformEvo, instanceEvo])
+
+  const orgLinkedEvoNames = useMemo(
+    () => orgCrmInstances
+      .map((i) => i.evolutionInstanceName)
+      .filter((name): name is string => Boolean(name)),
+    [orgCrmInstances],
+  )
 
   const settingsRef = useRef(settings)
   useEffect(() => { settingsRef.current = settings }, [settings])
@@ -175,6 +183,20 @@ export default function Settings() {
   // ── Load instances ─────────────────────────────────────────────────────────
   const loadInstances = useCallback(async () => {
     if (!settingsRef.current.apiUrl || !settingsRef.current.apiKey) return
+    if (!activeOrganizationId) {
+      setInstances([])
+      return
+    }
+
+    const linkedNames = useTenantStore.getState()
+      .instances
+      .filter((i) => i.organizationId === activeOrganizationId && i.active && i.evolutionInstanceName)
+      .map((i) => i.evolutionInstanceName as string)
+    if (linkedNames.length === 0) {
+      setInstances([])
+      return
+    }
+
     setLoadingInstances(true)
     setError(null)
     try {
@@ -206,9 +228,14 @@ export default function Settings() {
         }
       }).filter((inst) => !!inst.instanceName)
 
-      // Check webhook status for each instance
+      const byName = new Map(list.map((inst) => [inst.instanceName, inst]))
+      const orgList = linkedNames.map((name) =>
+        byName.get(name) ?? { instanceName: name, connectionStatus: 'close' },
+      )
+
+      // Check webhook status for each org-linked instance
       const withWebhook = await Promise.all(
-        list.map(async (inst) => {
+        orgList.map(async (inst) => {
           try {
             const wh = await evo('GET', `/webhook/find/${inst.instanceName}`)
             const url = wh?.url ?? wh?.webhook?.url ?? ''
@@ -226,13 +253,14 @@ export default function Settings() {
     } finally {
       setLoadingInstances(false)
     }
-  }, [evo])
+  }, [evo, activeOrganizationId])
 
   const apiUrl = settings.apiUrl
   const apiKey = settings.apiKey
   useEffect(() => {
-    if (apiUrl && apiKey) loadInstances()
-  }, [apiUrl, apiKey]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (apiUrl && apiKey && activeOrganizationId) loadInstances()
+    else setInstances([])
+  }, [apiUrl, apiKey, activeOrganizationId, orgLinkedEvoNames, loadInstances])
 
   // ── Save instance display names ────────────────────────────────────────────
   const flash = (msg: string) => {
@@ -544,7 +572,7 @@ export default function Settings() {
 
           {!loadingInstances && instances.length === 0 && (
             <div className="text-sm text-gray-400 py-6 text-center border-2 border-dashed border-gray-200 rounded-lg">
-              No instances found. Create one to get started.
+              No WhatsApp instances for this organization yet. Create one to get started.
             </div>
           )}
 
