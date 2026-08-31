@@ -203,13 +203,15 @@ export default function Inbox() {
   }, [allMessages.length])
 
   const handleSend = async () => {
-    if (!text.trim() || !selected || sending) return
+    if (!text.trim() || !selected || sending || !conv) return
     const msgText = text.trim()
     setSending(true)
     setText('')
 
     const tmpMsg: Message = {
       id: `tmp-${Date.now()}`,
+      organizationId: conv.organizationId,
+      instanceId: conv.instanceId,
       conversationId: selected,
       sender: 'agent',
       type: 'text',
