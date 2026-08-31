@@ -65,6 +65,8 @@ function BootSplash({ children }: { children: React.ReactNode }) {
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, member } = useAuthStore()
   const tenantReady = useTenantStore((s) => s.ready)
+  // Already signed in — keep pages mounted across token refresh / tab focus
+  if (user && member === true && tenantReady) return <>{children}</>
   if (loading || member === null || (member && !tenantReady)) {
     return <SplashScreen ready={false} />
   }
@@ -84,8 +86,8 @@ export default function App() {
     let cancelled = false
 
     const applySession = async (user: import('@supabase/supabase-js').User | null) => {
-      setUser(user)
       if (!user) {
+        setUser(null)
         setRole(null)
         setIsPlatformAdmin(false)
         setMember(false)
@@ -95,8 +97,16 @@ export default function App() {
         return
       }
 
-      setMember(null)
-      setReady(false)
+      const prev = useAuthStore.getState()
+      const keepMounted = prev.member === true && prev.user?.id === user.id
+      setUser(user)
+      // Tab focus / TOKEN_REFRESHED must not set member=null — that unmounts the
+      // app and wipes in-progress forms (e.g. order prompt).
+      if (!keepMounted) {
+        setMember(null)
+        setReady(false)
+      }
+
       const { hasProfile, isPlatformAdmin } = await resolveMembership(user.id)
       if (cancelled) return
       if (!hasProfile) {
@@ -112,7 +122,11 @@ export default function App() {
 
       setIsPlatformAdmin(isPlatformAdmin)
       setMember(true)
-      requestNotificationPermission().catch(() => {})
+      if (keepMounted) {
+        setLoading(false)
+      } else {
+        requestNotificationPermission().catch(() => {})
+      }
     }
 
     supabase.auth.getSession().then(({ data: { session } }) => {

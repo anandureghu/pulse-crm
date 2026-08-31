@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { useTenantStore } from '../store/tenantStore'
 import { toast } from '../components/Toast'
 import { formatPhoneDisplay } from '../lib/phone'
+import { printPackingSlip, packingSlipHtml, type PackingSlipData } from '../lib/packingSlip'
+import { downloadCsv } from '../lib/analytics'
 
 interface CachedVariant {
   variantId: number
@@ -12,6 +14,19 @@ interface CachedVariant {
   sku: string
   price: string
   currency: string
+  vendor?: string
+  productType?: string
+  handle?: string
+  status?: string
+  tags?: string[]
+  description?: string
+  compareAtPrice?: string
+  barcode?: string
+  inventoryQuantity?: number
+  option1?: string
+  option2?: string
+  option3?: string
+  metafields?: Record<string, string>
 }
 
 interface ShopifyProductsCache {
@@ -95,6 +110,45 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'orders', label: 'Orders' },
 ]
 
+const ORDER_DRAFT_KEY = 'pulsrm_order_create_draft'
+
+interface OrderCreateDraft {
+  prompt: string
+  dto: OrderDto | null
+  tagsInput: string
+  selectedByLine: (number | null)[]
+}
+
+function loadOrderDraft(): OrderCreateDraft | null {
+  try {
+    const raw = sessionStorage.getItem(ORDER_DRAFT_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as OrderCreateDraft
+    if (typeof parsed?.prompt !== 'string') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveOrderDraft(draft: OrderCreateDraft) {
+  try {
+    const empty = !draft.prompt.trim() && !draft.dto
+    if (empty) sessionStorage.removeItem(ORDER_DRAFT_KEY)
+    else sessionStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify(draft))
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function clearOrderDraft() {
+  try {
+    sessionStorage.removeItem(ORDER_DRAFT_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 function priceKey(amount: number): string {
   return Number(amount).toFixed(2)
 }
@@ -114,6 +168,67 @@ function pickBestVariant(matches: CachedVariant[], hint?: string | null): number
   if (!hint?.trim()) return null
   const ranked = [...matches].sort((a, b) => scoreHint(b, hint) - scoreHint(a, hint))
   return scoreHint(ranked[0], hint) > 0 ? ranked[0].variantId : null
+}
+
+const PRODUCT_CSV_BASE_HEADERS = [
+  'Product ID',
+  'Variant ID',
+  'Product Title',
+  'Variant Title',
+  'SKU',
+  'Price',
+  'Currency',
+  'Vendor',
+  'Product Type',
+  'Handle',
+  'Status',
+  'Tags',
+  'Description',
+  'Compare At Price',
+  'Barcode',
+  'Inventory Quantity',
+  'Option 1',
+  'Option 2',
+  'Option 3',
+  'Synced At',
+] as const
+
+function exportProductsCsv(products: CachedVariant[], syncedAt: string | null) {
+  const metafieldKeys = new Set<string>()
+  for (const p of products) {
+    for (const key of Object.keys(p.metafields ?? {})) metafieldKeys.add(key)
+  }
+  const metaHeaders = [...metafieldKeys].sort()
+  const headers = [...PRODUCT_CSV_BASE_HEADERS, ...metaHeaders]
+
+  const rows = products.map((p) => {
+    const base: (string | number)[] = [
+      p.productId,
+      p.variantId,
+      p.title,
+      p.variantTitle === 'Default Title' ? 'Default' : p.variantTitle,
+      p.sku,
+      p.price,
+      p.currency,
+      p.vendor ?? '',
+      p.productType ?? '',
+      p.handle ?? '',
+      p.status ?? '',
+      (p.tags ?? []).join('; '),
+      p.description ?? '',
+      p.compareAtPrice ?? '',
+      p.barcode ?? '',
+      p.inventoryQuantity ?? '',
+      p.option1 ?? '',
+      p.option2 ?? '',
+      p.option3 ?? '',
+      syncedAt ?? '',
+    ]
+    return [...base, ...metaHeaders.map((k) => p.metafields?.[k] ?? '')]
+  })
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  downloadCsv(`products-${stamp}.csv`, headers, rows)
 }
 
 async function invokeFunction<T>(name: string, body: unknown): Promise<T> {
@@ -139,16 +254,16 @@ async function invokeFunction<T>(name: string, body: unknown): Promise<T> {
 
 export default function Orders() {
   const [tab, setTab] = useState<Tab>('create')
-  const [prompt, setPrompt] = useState('')
-  const [dto, setDto] = useState<OrderDto | null>(null)
+  const [prompt, setPrompt] = useState(() => loadOrderDraft()?.prompt ?? '')
+  const [dto, setDto] = useState<OrderDto | null>(() => loadOrderDraft()?.dto ?? null)
   const [cache, setCache] = useState<ShopifyProductsCache | null>(null)
   /** Selected variant id per line index */
-  const [selectedByLine, setSelectedByLine] = useState<(number | null)[]>([])
+  const [selectedByLine, setSelectedByLine] = useState<(number | null)[]>(() => loadOrderDraft()?.selectedByLine ?? [])
   const [parsing, setParsing] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [creating, setCreating] = useState(false)
   const [recent, setRecent] = useState<ShopifyOrderRow[]>([])
-  const [tagsInput, setTagsInput] = useState('')
+  const [tagsInput, setTagsInput] = useState(() => loadOrderDraft()?.tagsInput ?? '')
   const [productSearch, setProductSearch] = useState('')
   const [formKey, setFormKey] = useState(0)
   const [syncingOrders, setSyncingOrders] = useState(false)
@@ -161,8 +276,11 @@ export default function Orders() {
   const [editNote, setEditNote] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [slip, setSlip] = useState<PackingSlipData | null>(null)
+  const [slipLoadingId, setSlipLoadingId] = useState<string | null>(null)
 
   const resetCreateForm = () => {
+    clearOrderDraft()
     setPrompt('')
     setDto(null)
     setTagsInput('')
@@ -207,6 +325,10 @@ export default function Orders() {
     loadRecent()
   }, [loadCache, loadRecent])
 
+  useEffect(() => {
+    saveOrderDraft({ prompt, dto, tagsInput, selectedByLine })
+  }, [prompt, dto, tagsInput, selectedByLine])
+
   const allProducts = useMemo(() => {
     if (!cache?.byPrice) return []
     const map = new Map<number, CachedVariant>()
@@ -246,6 +368,7 @@ export default function Orders() {
       setSelectedByLine([])
       return
     }
+    if (!cache?.byPrice) return
     setSelectedByLine((prev) =>
       lineItems.map((li, i) => {
         const matches = lineMatches[i] ?? []
@@ -436,6 +559,24 @@ export default function Orders() {
     }
   }
 
+  const handlePackingSlip = async (row: ShopifyOrderRow) => {
+    if (!row.shopify_order_id) {
+      toast('No Shopify order id to load a packing slip', 'error')
+      return
+    }
+    setSlipLoadingId(row.id)
+    try {
+      const data = await invokeFunction<PackingSlipData>('shopify-packing-slip', {
+        shopifyOrderId: row.shopify_order_id,
+      })
+      setSlip(data)
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setSlipLoadingId(null)
+    }
+  }
+
   const handleDelete = async (row: ShopifyOrderRow) => {
     const label = row.shopify_order_name || row.shopify_order_id || 'this order'
     if (!window.confirm(`Cancel and remove ${label} from the CRM list?`)) return
@@ -547,13 +688,25 @@ export default function Orders() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
               />
             </div>
-            <button
-              onClick={handleParse}
-              disabled={parsing}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
-            >
-              {parsing ? 'Parsing…' : 'Parse with AI'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleParse}
+                disabled={parsing}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+              >
+                {parsing ? 'Parsing…' : 'Parse with AI'}
+              </button>
+              {(prompt.trim() || dto) && (
+                <button
+                  type="button"
+                  onClick={resetCreateForm}
+                  disabled={parsing || creating}
+                  className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
           {dto && (
@@ -766,13 +919,23 @@ export default function Orders() {
                 })}
               </div>
 
-              <button
-                onClick={handleCreate}
-                disabled={creating || !allLinesReady}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
-              >
-                {creating ? 'Creating…' : 'Create Shopify order'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleCreate}
+                  disabled={creating || !allLinesReady}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+                >
+                  {creating ? 'Creating…' : 'Create Shopify order'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetCreateForm}
+                  disabled={creating}
+                  className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -782,13 +945,24 @@ export default function Orders() {
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h3 className="font-semibold text-gray-700">Synced products</h3>
-            <input
-              type="search"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-              placeholder="Search title, SKU, price…"
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="search"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Search title, SKU, price…"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              {allProducts.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => exportProductsCsv(filteredProducts, cache?.syncedAt ?? null)}
+                  className="text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+                >
+                  Export CSV
+                </button>
+              )}
+            </div>
           </div>
           {allProducts.length === 0 ? (
             <p className="text-sm text-gray-400">
@@ -825,6 +999,43 @@ export default function Orders() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {slip && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setSlip(null)}>
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-800">Packing slip {slip.order.name}</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { printPackingSlip(slip) }
+                    catch (e) { toast((e as Error).message, 'error') }
+                  }}
+                  className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-green-700"
+                >
+                  Print
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSlip(null)}
+                  className="text-sm text-gray-500 hover:text-gray-700 px-2 py-1.5"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <iframe
+              title={`Packing slip ${slip.order.name}`}
+              className="w-full flex-1 min-h-[480px] bg-white rounded-b-xl"
+              srcDoc={packingSlipHtml(slip)}
+            />
+          </div>
         </div>
       )}
 
@@ -921,6 +1132,14 @@ export default function Orders() {
                       </td>
                       <td className="py-2 whitespace-nowrap">
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handlePackingSlip(row)}
+                            disabled={slipLoadingId === row.id}
+                            className="text-sm text-green-600 hover:text-green-700 disabled:opacity-50"
+                          >
+                            {slipLoadingId === row.id ? '…' : 'Packing slip'}
+                          </button>
                           <button
                             type="button"
                             onClick={() => openEdit(row)}

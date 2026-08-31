@@ -62,6 +62,77 @@ const ORDER_UPDATE_MUTATION = `#graphql
   }
 `
 
+const CUSTOMER_CREATE_MUTATION = `#graphql
+  mutation CustomerCreate($input: CustomerInput!) {
+    customerCreate(input: $input) {
+      userErrors { field message }
+      customer { id }
+    }
+  }
+`
+
+const CUSTOMER_UPDATE_MUTATION = `#graphql
+  mutation CustomerUpdate($input: CustomerInput!) {
+    customerUpdate(input: $input) {
+      userErrors { field message }
+      customer { id }
+    }
+  }
+`
+
+function graphqlErrors(errors: { field?: string[] | null; message: string }[] | undefined): string {
+  return (errors ?? []).map((e) => {
+    const field = e.field?.length ? `${e.field.join('.')}: ` : ''
+    return `${field}${e.message}`
+  }).join('; ')
+}
+
+function isUsableCustomerId(id: string | null | undefined): id is string {
+  return Boolean(id && id !== '0' && id !== 'undefined')
+}
+
+/** orderCreate.toUpsert requires id or email; COD orders are often phone-only. */
+async function ensureShopifyCustomerId(
+  cfg: ShopifyConfig,
+  opts: {
+    existingId: string | null
+    email?: string | null
+    phoneE164: string
+    phoneDigits: string
+    mailing: Record<string, string>
+  },
+): Promise<string> {
+  if (isUsableCustomerId(opts.existingId)) return opts.existingId
+
+  const input: Record<string, unknown> = {
+    firstName: opts.mailing.firstName,
+    lastName: opts.mailing.lastName,
+    phone: opts.phoneE164,
+    addresses: [opts.mailing],
+  }
+  const email = opts.email?.trim()
+  if (email) input.email = email
+
+  const data = await shopifyGraphql<{
+    customerCreate: {
+      userErrors: { field?: string[] | null; message: string }[]
+      customer: { id: string } | null
+    }
+  }>(cfg, CUSTOMER_CREATE_MUTATION, { input })
+
+  const createdId = fromShopifyGid(data.customerCreate.customer?.id)
+  if (createdId) return createdId
+
+  const errText = graphqlErrors(data.customerCreate.userErrors)
+  const taken = /already been taken|has already been taken/i.test(errText)
+  if (taken) {
+    const existing = await findShopifyCustomer(cfg, opts.phoneDigits, email)
+    const recovered = existing?.id != null ? String(existing.id) : null
+    if (isUsableCustomerId(recovered)) return recovered
+  }
+  throw new Error(errText || 'Shopify customerCreate returned no customer')
+}
+
 function moneyBag(amount: number, currency: string) {
   return {
     shopMoney: {
@@ -140,7 +211,8 @@ Deno.serve(async (req) => {
     {
       const existing = await findShopifyCustomer(cfg, phoneDigits, dto.customer.email)
       if (existing) {
-        shopifyCustomerId = String(existing.id)
+        const foundId = String(existing.id)
+        shopifyCustomerId = isUsableCustomerId(foundId) ? foundId : null
         dto = { ...dto, customer: mergeCustomerFromShopify(dto.customer, existing) }
       }
     }
@@ -180,24 +252,28 @@ Deno.serve(async (req) => {
     const mailing = toGraphqlMailingAddress(dto.customer, phoneE164)
     const currency = await shopCurrency(cfg)
 
-    const customerInput = shopifyCustomerId
-      ? {
-          toUpsert: {
-            id: shopifyGid('Customer', shopifyCustomerId),
-            firstName: mailing.firstName,
-            lastName: mailing.lastName,
-            email: dto.customer.email?.trim() || undefined,
-            phone: phoneE164,
-          },
-        }
-      : {
-          toUpsert: {
-            firstName: mailing.firstName,
-            lastName: mailing.lastName,
-            email: dto.customer.email?.trim() || undefined,
-            phone: phoneE164,
-          },
-        }
+    shopifyCustomerId = await ensureShopifyCustomerId(cfg, {
+      existingId: shopifyCustomerId,
+      email: dto.customer.email,
+      phoneE164,
+      phoneDigits,
+      mailing,
+    })
+
+    try {
+      await shopifyGraphql(cfg, CUSTOMER_UPDATE_MUTATION, {
+        input: {
+          id: shopifyGid('Customer', shopifyCustomerId),
+          firstName: mailing.firstName,
+          lastName: mailing.lastName,
+          phone: phoneE164,
+          ...(dto.customer.email?.trim() ? { email: dto.customer.email.trim() } : {}),
+          addresses: [mailing],
+        },
+      })
+    } catch (e) {
+      console.error('Failed to update Shopify customer address:', e)
+    }
 
     const order: Record<string, unknown> = {
       lineItems: selected.map((l) => ({
@@ -205,7 +281,7 @@ Deno.serve(async (req) => {
         quantity: Math.max(1, Number(l.quantity) || 1),
         requiresShipping: true,
       })),
-      customer: customerInput,
+      customer: { toAssociate: { id: shopifyGid('Customer', shopifyCustomerId) } },
       shippingAddress: mailing,
       billingAddress: { ...mailing },
       financialStatus: isCod ? 'PENDING' : (dto.financialStatus === 'pending' ? 'PENDING' : 'PAID'),
@@ -269,10 +345,7 @@ Deno.serve(async (req) => {
 
     const payload = created.orderCreate
     if (payload.userErrors?.length) {
-      throw new Error(payload.userErrors.map((e) => {
-        const field = e.field?.length ? `${e.field.join('.')}: ` : ''
-        return `${field}${e.message}`
-      }).join('; '))
+      throw new Error(graphqlErrors(payload.userErrors))
     }
     if (!payload.order) throw new Error('Shopify orderCreate returned no order')
 
