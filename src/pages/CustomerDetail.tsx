@@ -14,6 +14,7 @@ import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
 import { FollowupFormModal } from '../components/FollowupFormModal'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
+import { useTenantStore } from '../store/tenantStore'
 import type { Customer, Enquiry, Followup } from '../types'
 
 type Tab = 'profile' | 'timeline' | 'whatsapp' | 'notes' | 'enquiries' | 'followups' | 'files' | 'calls' | 'payments'
@@ -729,6 +730,8 @@ function FilesTab({
   fileInputRef: React.RefObject<HTMLInputElement | null>
   onActivity: (desc: string) => void
 }) {
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [files, setFiles] = useState<FileRecord[]>([])
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -789,6 +792,8 @@ function FilesTab({
         url,
         size: file.size,
         uploaded_by: authorEmail,
+        organization_id: organizationId,
+        instance_id: instanceId,
       })
 
       if (dbError) throw dbError
@@ -872,6 +877,8 @@ function CallLogsTab({
   authorEmail: string
   onActivity: (type: string, desc: string) => void
 }) {
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [logs, setLogs] = useState<CallLog[]>([])
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ direction: 'outbound', duration: '', outcome: 'answered', notes: '' })
@@ -908,6 +915,10 @@ function CallLogsTab({
   }, [customerId])
 
   const handleSave = async () => {
+    if (!organizationId || !instanceId) {
+      toast('Select an organization and instance first', 'error')
+      return
+    }
     const { error } = await supabase.from('call_logs').insert({
       customer_id: customerId,
       direction: form.direction,
@@ -915,6 +926,8 @@ function CallLogsTab({
       outcome: form.outcome,
       notes: form.notes,
       logged_by: authorEmail,
+      organization_id: organizationId,
+      instance_id: instanceId,
     })
     if (error) { toast('Failed to log call', 'error'); return }
     onActivity('call_logged', `Call logged: ${form.outcome}, ${form.duration}min`)
@@ -1030,6 +1043,8 @@ function PaymentsTab({
   authorEmail: string
   onActivity: (type: string, desc: string) => void
 }) {
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [payments, setPayments] = useState<Payment[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -1136,6 +1151,8 @@ function PaymentsTab({
             customer_id: customerId,
             ...payload,
             recorded_by: authorEmail,
+            organization_id: organizationId,
+            instance_id: instanceId,
           })
           .select('*')
           .single()

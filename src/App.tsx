@@ -2,10 +2,14 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useAuthStore } from './store/authStore'
+import { useTenantStore } from './store/tenantStore'
+import { queryClient } from './lib/queryClient'
+import { tenantKeys } from './lib/queryKeys'
 import { requestNotificationPermission, showLocalNotification } from './lib/notifications'
 import ErrorBoundary from './components/ErrorBoundary'
 import InstallPWA from './components/InstallPWA'
 import SplashScreen from './components/SplashScreen'
+import TenantSync from './components/TenantSync'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import SetPassword from './pages/SetPassword'
@@ -22,25 +26,30 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Orders = lazy(() => import('./pages/Orders'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Team = lazy(() => import('./pages/Team'))
+const Admin = lazy(() => import('./pages/Admin'))
 
-async function resolveMembership(userId: string): Promise<'admin' | 'sales' | null> {
+async function resolveMembership(userId: string): Promise<{
+  hasProfile: boolean
+  isPlatformAdmin: boolean
+}> {
   const { data } = await supabase
     .from('users')
-    .select('role')
+    .select('id, is_platform_admin')
     .eq('id', userId)
     .maybeSingle()
 
-  if (data?.role === 'admin' || data?.role === 'sales') return data.role
-
-  // No CRM profile → not invited. Remove auth user and clear session.
-  try {
-    await supabase.functions.invoke('reject-uninvited')
-  } catch {
-    // ignore — still sign out locally
+  if (!data) {
+    try {
+      await supabase.functions.invoke('reject-uninvited')
+    } catch {
+      // ignore
+    }
+    sessionStorage.setItem('pulsrm_not_invited', '1')
+    await supabase.auth.signOut()
+    return { hasProfile: false, isPlatformAdmin: false }
   }
-  sessionStorage.setItem('pulsrm_not_invited', '1')
-  await supabase.auth.signOut()
-  return null
+
+  return { hasProfile: true, isPlatformAdmin: Boolean(data.is_platform_admin) }
 }
 
 function BootSplash({ children }: { children: React.ReactNode }) {
@@ -55,9 +64,10 @@ function BootSplash({ children }: { children: React.ReactNode }) {
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, member } = useAuthStore()
+  const tenantReady = useTenantStore((s) => s.ready)
   // Already signed in — keep pages mounted across token refresh / tab focus
-  if (user && member === true) return <>{children}</>
-  if (loading || member === null) {
+  if (user && member === true && tenantReady) return <>{children}</>
+  if (loading || member === null || (member && !tenantReady)) {
     return <SplashScreen ready={false} />
   }
   if (!user || !member) return <Navigate to="/login" replace />
@@ -69,7 +79,8 @@ function PageLoader() {
 }
 
 export default function App() {
-  const { setUser, setRole, setMember, setLoading } = useAuthStore()
+  const { setUser, setRole, setMember, setLoading, setIsPlatformAdmin } = useAuthStore()
+  const { setReady, reset: resetTenant } = useTenantStore()
 
   useEffect(() => {
     let cancelled = false
@@ -78,7 +89,10 @@ export default function App() {
       if (!user) {
         setUser(null)
         setRole(null)
+        setIsPlatformAdmin(false)
         setMember(false)
+        resetTenant()
+        queryClient.removeQueries({ queryKey: tenantKeys.all })
         setLoading(false)
         return
       }
@@ -88,21 +102,31 @@ export default function App() {
       setUser(user)
       // Tab focus / TOKEN_REFRESHED must not set member=null — that unmounts the
       // app and wipes in-progress forms (e.g. order prompt).
-      if (!keepMounted) setMember(null)
+      if (!keepMounted) {
+        setMember(null)
+        setReady(false)
+      }
 
-      const role = await resolveMembership(user.id)
+      const { hasProfile, isPlatformAdmin } = await resolveMembership(user.id)
       if (cancelled) return
-      if (!role) {
+      if (!hasProfile) {
         setUser(null)
         setRole(null)
+        setIsPlatformAdmin(false)
         setMember(false)
+        resetTenant()
+        queryClient.removeQueries({ queryKey: tenantKeys.all })
         setLoading(false)
         return
       }
-      setRole(role)
+
+      setIsPlatformAdmin(isPlatformAdmin)
       setMember(true)
-      setLoading(false)
-      if (!keepMounted) requestNotificationPermission().catch(() => {})
+      if (keepMounted) {
+        setLoading(false)
+      } else {
+        requestNotificationPermission().catch(() => {})
+      }
     }
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -117,7 +141,15 @@ export default function App() {
       cancelled = true
       subscription.unsubscribe()
     }
-  }, [setUser, setRole, setMember, setLoading])
+  }, [
+    setUser,
+    setRole,
+    setMember,
+    setLoading,
+    setIsPlatformAdmin,
+    setReady,
+    resetTenant,
+  ])
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
@@ -133,6 +165,7 @@ export default function App() {
     <ErrorBoundary>
       <Toaster />
       <InstallPWA />
+      <TenantSync />
       <BootSplash>
         <BrowserRouter>
           <Routes>
@@ -157,6 +190,7 @@ export default function App() {
               <Route path="orders" element={<Suspense fallback={<PageLoader />}><Orders /></Suspense>} />
               <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
               <Route path="team" element={<Suspense fallback={<PageLoader />}><Team /></Suspense>} />
+              <Route path="admin" element={<Suspense fallback={<PageLoader />}><Admin /></Suspense>} />
             </Route>
           </Routes>
         </BrowserRouter>

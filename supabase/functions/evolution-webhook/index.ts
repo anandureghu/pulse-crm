@@ -1,6 +1,13 @@
 import { makeServiceClient, json, err } from '../_shared/supabase.ts'
 import type { EvolutionWebhookMessage, EvolutionWebhookStatus } from '../_shared/types.ts'
 
+type TenantInstance = {
+  id: string
+  organization_id: string
+  evolution_instance_name: string | null
+  settings: Record<string, unknown>
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return err('Method Not Allowed', 405)
 
@@ -13,6 +20,17 @@ Deno.serve(async (req) => {
 
   const supabase = makeServiceClient()
   const event = (payload.event ?? '').toLowerCase().replace(/_/g, '.')
+  const evoName = (payload as { instance?: string }).instance?.trim()
+  if (!evoName) {
+    console.warn('Webhook missing instance name — ignoring')
+    return json({ ok: true, ignored: 'no_instance' })
+  }
+
+  const tenant = await resolveTenantInstance(supabase, evoName)
+  if (!tenant) {
+    console.warn(`Unknown Evolution instance "${evoName}" — ignoring`)
+    return json({ ok: true, ignored: 'unknown_instance' })
+  }
 
   try {
     switch (event) {
@@ -21,7 +39,7 @@ Deno.serve(async (req) => {
           ? (payload as any).data
           : [(payload as any).data]
         for (const item of msgs) {
-          await handleMessageUpsert(supabase, { ...payload, data: item } as EvolutionWebhookMessage)
+          await handleMessageUpsert(supabase, tenant, { ...payload, data: item } as EvolutionWebhookMessage)
         }
         break
       }
@@ -30,7 +48,7 @@ Deno.serve(async (req) => {
           ? (payload as any).data
           : [(payload as any).data]
         for (const item of updates) {
-          await handleMessageStatus(supabase, { ...payload, data: item } as EvolutionWebhookStatus)
+          await handleMessageStatus(supabase, tenant, { ...payload, data: item } as EvolutionWebhookStatus)
         }
         break
       }
@@ -44,10 +62,22 @@ Deno.serve(async (req) => {
   }
 })
 
+async function resolveTenantInstance(
+  supabase: ReturnType<typeof makeServiceClient>,
+  evoName: string,
+): Promise<TenantInstance | null> {
+  const { data } = await supabase
+    .from('instances')
+    .select('id, organization_id, evolution_instance_name, settings')
+    .eq('evolution_instance_name', evoName)
+    .eq('active', true)
+    .maybeSingle()
+  return (data as TenantInstance | null) ?? null
+}
+
 function phoneFromJid(jid: string): string {
   const raw = jid.replace(/@s\.whatsapp\.net$/, '').replace(/@.*$/, '')
   const digits = raw.replace(/\D/g, '')
-  // Canonical IN storage: 91 + 10-digit mobile (length 12)
   if (digits.length === 10 && /^[6-9]/.test(digits)) return `91${digits}`
   if (digits.length === 12 && digits.startsWith('91')) return digits
   if (digits.length === 11 && digits.startsWith('0') && /^[6-9]/.test(digits.slice(1))) {
@@ -76,22 +106,21 @@ function messageType(data: EvolutionWebhookMessage['data']): string {
   return 'text'
 }
 
-// ── Load Evolution config from settings table ─────────────────────────────────
-
-async function loadEvoCfg(
+async function evoCfgFromInstance(
   supabase: ReturnType<typeof makeServiceClient>,
+  tenant: TenantInstance,
 ): Promise<{ apiUrl: string; apiKey: string; activeInstance: string } | null> {
-  try {
-    const { data } = await supabase.from('settings').select('value').eq('key', 'evolution').single()
-    const cfg = data?.value as { apiUrl?: string; apiKey?: string; activeInstance?: string } | null
-    if (!cfg?.apiUrl || !cfg?.apiKey || !cfg?.activeInstance) return null
-    return { apiUrl: cfg.apiUrl, apiKey: cfg.apiKey, activeInstance: cfg.activeInstance }
-  } catch {
-    return null
-  }
-}
+  const evo = (tenant.settings?.evolution ?? {}) as { activeInstance?: string; apiUrl?: string; apiKey?: string }
+  const activeInstance = tenant.evolution_instance_name || evo.activeInstance || ''
+  if (!activeInstance) return null
 
-// ── Download media from Evolution and upload to Supabase Storage ──────────────
+  const { data: row } = await supabase.from('settings').select('value').eq('key', 'evolution').maybeSingle()
+  const global = (row?.value ?? {}) as { apiUrl?: string; apiKey?: string }
+  const apiUrl = global.apiUrl || evo.apiUrl
+  const apiKey = global.apiKey || evo.apiKey
+  if (!apiUrl || !apiKey) return null
+  return { apiUrl, apiKey, activeInstance }
+}
 
 async function storeMedia(
   supabase: ReturnType<typeof makeServiceClient>,
@@ -119,7 +148,6 @@ async function storeMedia(
     const b64: string | undefined = data.base64
     if (!b64) return null
 
-    // Parse "data:image/jpeg;base64,..." or plain base64
     let mimeType = 'application/octet-stream'
     let b64Data = b64
     const match = b64.match(/^data:([^;]+);base64,(.+)$/)
@@ -130,7 +158,7 @@ async function storeMedia(
 
     const ext = mimeType.split('/')[1]?.split(';')[0]?.replace('+', '') ?? 'bin'
     const bytes = Uint8Array.from(atob(b64Data), (c) => c.charCodeAt(0))
-    const path = `${messageId}.${ext}`
+    const path = `${cfg.activeInstance}/${messageId}.${ext}`
 
     const { error } = await supabase.storage
       .from('whatsapp-media')
@@ -149,13 +177,14 @@ async function storeMedia(
   }
 }
 
-// ── Handle incoming message ───────────────────────────────────────────────────
-
-async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient>, payload: EvolutionWebhookMessage) {
+async function handleMessageUpsert(
+  supabase: ReturnType<typeof makeServiceClient>,
+  tenant: TenantInstance,
+  payload: EvolutionWebhookMessage,
+) {
   const { data } = payload
   const remoteJid = data.key.remoteJid ?? ''
 
-  // Skip groups / broadcasts — only 1:1 chats
   if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return
 
   const fromMe = Boolean(data.key.fromMe)
@@ -170,14 +199,15 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
   const messageId = data.key.id
   if (!messageId) return
 
-  // Download and store media in Supabase Storage if this is a media message
+  const orgId = tenant.organization_id
+  const instanceId = tenant.id
+
   let media: string | null = null
   if (type !== 'text') {
-    const cfg = await loadEvoCfg(supabase)
+    const cfg = await evoCfgFromInstance(supabase, tenant)
     if (cfg) {
       media = await storeMedia(supabase, messageId, remoteJid, type, cfg, fromMe)
     }
-    // Fall back to WhatsApp CDN URL from payload if storage failed
     if (!media) {
       const msg = data.message
       media =
@@ -189,10 +219,10 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
     }
   }
 
-  // 1. Upsert customer by phone
   const { data: existingCustomer } = await supabase
     .from('customers')
     .select('id, name')
+    .eq('instance_id', instanceId)
     .eq('phone', phone)
     .maybeSingle()
 
@@ -208,17 +238,24 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
     isNewCustomer = true
     const { data: newCustomer, error } = await supabase
       .from('customers')
-      .insert({ phone, name: data.pushName ?? phone, assigned_to: null, tags: [] })
+      .insert({
+        phone,
+        name: data.pushName ?? phone,
+        assigned_to: null,
+        tags: [],
+        organization_id: orgId,
+        instance_id: instanceId,
+      })
       .select('id')
       .single()
     if (error || !newCustomer) throw error ?? new Error('Failed to create customer')
     customerId = newCustomer.id
   }
 
-  // 2. Find or create conversation
   const { data: existingConv } = await supabase
     .from('conversations')
     .select('id')
+    .eq('instance_id', instanceId)
     .eq('customer_id', customerId)
     .maybeSingle()
 
@@ -229,7 +266,6 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
   if (existingConv) {
     conversationId = existingConv.id
     if (fromMe) {
-      // Outbound from WA Business app / phone — update preview, do not bump unread
       await supabase.from('conversations').update({
         last_message: lastMsg,
       }).eq('id', conversationId)
@@ -247,6 +283,8 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
         customer_id: customerId,
         last_message: lastMsg,
         unread_count: fromMe ? 0 : 1,
+        organization_id: orgId,
+        instance_id: instanceId,
       })
       .select('id')
       .single()
@@ -254,7 +292,6 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
     conversationId = newConv.id
   }
 
-  // 3. Insert message (ignoreDuplicates so CRM-sent copies don't conflict)
   await supabase.from('messages').upsert(
     {
       id: messageId,
@@ -265,11 +302,12 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
       media,
       status: fromMe ? 'sent' : 'delivered',
       timestamp,
+      organization_id: orgId,
+      instance_id: instanceId,
     },
     { onConflict: 'id', ignoreDuplicates: true },
   )
 
-  // Activity / new-lead only for inbound customer messages
   if (fromMe) return
 
   const activityDesc = text
@@ -279,7 +317,15 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
   if (isNewCustomer) {
     const { data: enq } = await supabase
       .from('enquiries')
-      .insert({ customer_id: customerId, status: 'new_lead', stage: 'new_lead', assigned_to: null, value: 0 })
+      .insert({
+        customer_id: customerId,
+        status: 'new_lead',
+        stage: 'new_lead',
+        assigned_to: null,
+        value: 0,
+        organization_id: orgId,
+        instance_id: instanceId,
+      })
       .select('id')
       .single()
     if (enq) {
@@ -288,6 +334,8 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
         type: 'message_received',
         description: activityDesc,
         created_by: 'system',
+        organization_id: orgId,
+        instance_id: instanceId,
       })
     }
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
@@ -298,12 +346,14 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
       body: JSON.stringify({
         event: 'new_lead',
         data: { customerName: data.pushName ?? phone, customerPhone: phone },
+        instanceId,
       }),
     }).catch(() => {})
   } else {
     const { data: enq } = await supabase
       .from('enquiries')
       .select('id')
+      .eq('instance_id', instanceId)
       .eq('customer_id', customerId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -314,12 +364,18 @@ async function handleMessageUpsert(supabase: ReturnType<typeof makeServiceClient
         type: 'message_received',
         description: activityDesc,
         created_by: 'system',
+        organization_id: orgId,
+        instance_id: instanceId,
       })
     }
   }
 }
 
-async function handleMessageStatus(supabase: ReturnType<typeof makeServiceClient>, payload: EvolutionWebhookStatus) {
+async function handleMessageStatus(
+  supabase: ReturnType<typeof makeServiceClient>,
+  tenant: TenantInstance,
+  payload: EvolutionWebhookStatus,
+) {
   const statusMap: Record<string, string> = {
     DELIVERY_ACK: 'delivered',
     READ: 'read',
@@ -332,4 +388,5 @@ async function handleMessageStatus(supabase: ReturnType<typeof makeServiceClient
     .from('messages')
     .update({ status })
     .eq('id', payload.data.key.id)
+    .eq('instance_id', tenant.id)
 }

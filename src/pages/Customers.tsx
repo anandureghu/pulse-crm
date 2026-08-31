@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCustomers } from '../hooks/useCustomers'
 import { createCustomer, ensureConversation } from '../lib/db'
+import { useTenantStore } from '../store/tenantStore'
 import { normalizePhoneForStorage, formatPhoneDisplay, isValidIndianMobile } from '../lib/phone'
 import { toast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
@@ -31,6 +32,8 @@ type StatusFilter = 'all' | 'assigned' | 'unassigned' | 'shopify'
 export default function Customers() {
   const { customers, loading } = useCustomers()
   const navigate = useNavigate()
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [showAdd, setShowAdd] = useState(false)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -44,24 +47,29 @@ export default function Customers() {
       toast('Enter a name and a valid 10-digit Indian mobile (with or without +91)', 'error')
       return
     }
+    if (!organizationId || !instanceId) {
+      toast('Select an organization and instance first', 'error')
+      return
+    }
+    const scope = { organizationId, instanceId }
     setSaving(true)
     try {
       const existing = customers.find((c) => normalizePhoneForStorage(c.phone) === phoneNorm)
       if (existing) {
-        const convId = await ensureConversation(existing.id)
+        const convId = await ensureConversation(scope, existing.id)
         toast('Contact already exists — opening chat', 'success')
         setShowAdd(false)
         navigate(`/inbox?c=${convId}`)
         return
       }
-      const created = await createCustomer({
+      const created = await createCustomer(scope, {
         name: name.trim(),
         phone: phoneNorm,
         assignedTo: null,
         tags: [],
         aiAutoreply: false,
       })
-      const convId = await ensureConversation(created.id)
+      const convId = await ensureConversation(scope, created.id)
       toast('Contact added', 'success')
       setShowAdd(false)
       setName('')
@@ -86,7 +94,10 @@ export default function Customers() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session?.access_token}`,
           },
-          body: '{}',
+          body: JSON.stringify({
+            organizationId,
+            instanceId,
+          }),
         },
       )
       const body = await res.json()

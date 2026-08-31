@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getUsers } from '../lib/db'
+import { useTenantStore } from '../store/tenantStore'
 
 export interface AppUser {
   id: string
@@ -9,11 +10,16 @@ export interface AppUser {
 }
 
 export function useUsers() {
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
   const [users, setUsers] = useState<AppUser[]>([])
 
   useEffect(() => {
-    getUsers().then(setUsers)
-  }, [])
+    if (!organizationId) {
+      setUsers([])
+      return
+    }
+    getUsers(organizationId).then(setUsers)
+  }, [organizationId])
 
   return users
 }

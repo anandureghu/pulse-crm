@@ -28,29 +28,60 @@ Deno.serve(async (req) => {
   const { data: { user } } = await callerClient.auth.getUser()
   if (!user) return fail('Unauthorized', 401)
 
-  const { data: profile } = await callerClient.from('users').select('role').eq('id', user.id).single()
-  if (profile?.role !== 'admin') return fail('Forbidden: admin role required', 403)
-
-  let body: { email?: string; role?: string }
+  let body: { email?: string; role?: string; organizationId?: string }
   try { body = await req.json() } catch { return fail('Invalid JSON', 400) }
 
-  const { email, role = 'sales' } = body
+  const { email, role = 'sales', organizationId } = body
   if (!email) return fail('email is required', 400)
+  if (!organizationId) return fail('organizationId is required', 400)
   if (!['admin', 'sales'].includes(role)) return fail('role must be admin or sales', 400)
 
-  const normalized = email.trim().toLowerCase()
   const admin = makeServiceClient()
 
-  const { data: existing } = await admin.from('users').select('id').ilike('email', normalized).maybeSingle()
-  if (existing) return fail('A user with this email already exists', 409)
+  const { data: membership } = await admin
+    .from('organization_members')
+    .select('role')
+    .eq('organization_id', organizationId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+  const { data: profile } = await admin.from('users').select('is_platform_admin').eq('id', user.id).maybeSingle()
+  if (membership?.role !== 'admin' && !profile?.is_platform_admin) {
+    return fail('Forbidden: org admin role required', 403)
+  }
 
-  // Allowlist BEFORE invite so handle_new_user can create the profile
-  const { error: allowError } = await admin.from('invited_emails').upsert({
-    email: normalized,
-    role,
-    invited_by: user.id,
-  })
-  if (allowError) return fail(allowError.message, 400)
+  const normalized = email.trim().toLowerCase()
+
+  const { data: existingInvite } = await admin
+    .from('invited_emails')
+    .select('id')
+    .eq('organization_id', organizationId)
+    .ilike('email', normalized)
+    .maybeSingle()
+
+  if (existingInvite) {
+    await admin.from('invited_emails').update({ role, invited_by: user.id }).eq('id', existingInvite.id)
+  } else {
+    const { error: allowError } = await admin.from('invited_emails').insert({
+      email: normalized,
+      role,
+      invited_by: user.id,
+      organization_id: organizationId,
+    })
+    if (allowError) return fail(allowError.message, 400)
+  }
+
+  const { data: existingUser } = await admin.from('users').select('id').ilike('email', normalized).maybeSingle()
+  if (existingUser) {
+    await admin.from('organization_members').upsert(
+      {
+        organization_id: organizationId,
+        user_id: existingUser.id,
+        role,
+      },
+      { onConflict: 'organization_id,user_id' },
+    )
+    return ok({ ok: true, userId: existingUser.id, existing: true })
+  }
 
   const redirectTo = Deno.env.get('APP_URL') ?? 'https://pulse.picominds.com/set-password'
 
@@ -60,6 +91,14 @@ Deno.serve(async (req) => {
   if (error) return fail(error.message, 400)
 
   await admin.from('users').update({ role }).eq('id', data.user.id)
+  await admin.from('organization_members').upsert(
+    {
+      organization_id: organizationId,
+      user_id: data.user.id,
+      role,
+    },
+    { onConflict: 'organization_id,user_id' },
+  )
 
   return ok({ ok: true, userId: data.user.id })
 })
