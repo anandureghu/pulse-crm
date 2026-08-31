@@ -32,6 +32,8 @@ type EvoRuntimeSettings = InstanceEvolutionSettings & {
 
 interface Instance {
   instanceName: string
+  displayName: string
+  crmInstanceId?: string
   instanceId?: string
   connectionStatus?: string
   ownerJid?: string
@@ -39,6 +41,10 @@ interface Instance {
   profilePicUrl?: string
   integration?: string
   webhookConfigured?: boolean
+}
+
+function newEvolutionInstanceName(): string {
+  return crypto.randomUUID()
 }
 
 type InstanceAction = { name: string; op: string }
@@ -111,7 +117,7 @@ export default function Settings() {
   const [renaming, setRenaming] = useState<RenameState>(null)
   const [newInstanceName, setNewInstanceName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
-  const [qrModal, setQrModal] = useState<{ name: string; src: string } | null>(null)
+  const [qrModal, setQrModal] = useState<{ evoName: string; displayName: string; src: string } | null>(null)
   const [qrCountdown, setQrCountdown] = useState(60)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
@@ -188,11 +194,10 @@ export default function Settings() {
       return
     }
 
-    const linkedNames = useTenantStore.getState()
+    const orgCrm = useTenantStore.getState()
       .instances
       .filter((i) => i.organizationId === activeOrganizationId && i.active && i.evolutionInstanceName)
-      .map((i) => i.evolutionInstanceName as string)
-    if (linkedNames.length === 0) {
+    if (orgCrm.length === 0) {
       setInstances([])
       return
     }
@@ -208,6 +213,7 @@ export default function Settings() {
         if (item?.instance?.instanceName) {
           return {
             instanceName: item.instance.instanceName,
+            displayName: item.instance.instanceName,
             instanceId: item.instance.instanceId ?? item.instance.id,
             connectionStatus: item.instance.connectionStatus ?? item.instance.status,
             ownerJid: item.instance.ownerJid,
@@ -217,8 +223,10 @@ export default function Settings() {
           }
         }
         // flat shape: { name, connectionStatus, ... }
+        const instanceName = item.instanceName ?? item.name
         return {
-          instanceName: item.instanceName ?? item.name,
+          instanceName,
+          displayName: instanceName,
           instanceId: item.instanceId ?? item.id,
           connectionStatus: item.connectionStatus ?? item.status,
           ownerJid: item.ownerJid,
@@ -229,9 +237,15 @@ export default function Settings() {
       }).filter((inst) => !!inst.instanceName)
 
       const byName = new Map(list.map((inst) => [inst.instanceName, inst]))
-      const orgList = linkedNames.map((name) =>
-        byName.get(name) ?? { instanceName: name, connectionStatus: 'close' },
-      )
+      const orgList = orgCrm.map((crm) => {
+        const evoName = crm.evolutionInstanceName as string
+        const found = byName.get(evoName)
+        return {
+          ...(found ?? { instanceName: evoName, connectionStatus: 'close' }),
+          displayName: crm.name,
+          crmInstanceId: crm.id,
+        }
+      })
 
       // Check webhook status for each org-linked instance
       const withWebhook = await Promise.all(
@@ -269,32 +283,33 @@ export default function Settings() {
   }
 
   // ── Link Evolution WA instance to this CRM instance ────────────────────────
-  const switchInstance = async (name: string) => {
-    const updated = { ...instanceEvo, activeInstance: name }
+  const switchInstance = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
+    const updated = { ...instanceEvo, activeInstance: evoName }
     setInstanceEvo(updated)
     try {
       await persistInstanceSettings({
         evolution: updated,
-        evolutionInstanceName: name,
-        name,
+        evolutionInstanceName: evoName,
       })
-      flash(`Linked Evolution instance "${name}" to this workspace`)
+      flash(`Linked "${displayName}" to this workspace`)
     } catch (e) {
       setError((e as Error).message)
     }
   }
 
   // ── Set webhook on instance ────────────────────────────────────────────────
-  const setWebhook = async (name: string) => {
+  const setWebhook = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
     const webhookUrl = settingsRef.current.webhookUrl.trim()
     if (!webhookUrl) {
       setError('Webhook URL is not configured. Ask a platform admin to set it under Admin → Platform integration.')
       return
     }
-    setInstanceAction({ name, op: 'webhook' })
+    setInstanceAction({ name: evoName, op: 'webhook' })
     setError(null)
     try {
-      await evo('POST', `/webhook/set/${name}`, {
+      await evo('POST', `/webhook/set/${evoName}`, {
         webhook: {
           enabled: true,
           url: webhookUrl,
@@ -303,7 +318,7 @@ export default function Settings() {
           events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
         },
       })
-      flash(`Webhook configured for "${name}"`)
+      flash(`Webhook configured for "${displayName}"`)
       await loadInstances()
     } catch (e) {
       setError(`Webhook setup failed: ${(e as Error).message}`)
@@ -319,21 +334,21 @@ export default function Settings() {
       setError('Select an organization first')
       return
     }
-    const name = newInstanceName.trim()
-    setInstanceAction({ name, op: 'create' })
+    const displayName = newInstanceName.trim()
+    const evoName = newEvolutionInstanceName()
+    setInstanceAction({ name: evoName, op: 'create' })
     setError(null)
     try {
       await evo('POST', '/instance/create', {
-        instanceName: name,
+        instanceName: evoName,
         integration: 'WHATSAPP-BAILEYS',
       })
-      // New CRM instance under active org, copying API credentials from current settings
       const { error: insErr } = await supabase.from('instances').insert({
         organization_id: activeOrganizationId,
-        name,
-        evolution_instance_name: name,
+        name: displayName,
+        evolution_instance_name: evoName,
         settings: {
-          evolution: { activeInstance: name, displayNames: {} },
+          evolution: { activeInstance: evoName },
           ai_config: aiConfig,
           shopify_config: shopifyConfig,
         },
@@ -343,7 +358,7 @@ export default function Settings() {
       await reloadInstancesForOrgs(orgIds)
       setNewInstanceName('')
       setShowCreate(false)
-      flash(`Created CRM + Evolution instance "${name}" — switch to it in the header`)
+      flash(`Created WhatsApp instance "${displayName}" — switch to it in the header`)
       await loadInstances()
     } catch (e) {
       setError(`Create failed: ${(e as Error).message}`)
@@ -353,13 +368,14 @@ export default function Settings() {
   }
 
   // ── Delete instance ────────────────────────────────────────────────────────
-  const deleteInstance = async (name: string) => {
-    if (!confirm(`Delete instance "${name}"? This will disconnect WhatsApp.`)) return
-    setInstanceAction({ name, op: 'delete' })
+  const deleteInstance = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
+    if (!confirm(`Delete instance "${displayName}"? This will disconnect WhatsApp.`)) return
+    setInstanceAction({ name: evoName, op: 'delete' })
     setError(null)
     try {
-      await evo('DELETE', `/instance/delete/${name}`)
-      if (instanceEvo.activeInstance === name) {
+      await evo('DELETE', `/instance/delete/${evoName}`)
+      if (instanceEvo.activeInstance === evoName) {
         const updated = { ...instanceEvo, activeInstance: '' }
         setInstanceEvo(updated)
         await persistInstanceSettings({ evolution: updated, evolutionInstanceName: null })
@@ -370,7 +386,7 @@ export default function Settings() {
           .from('instances')
           .update({ active: false, evolution_instance_name: null })
           .eq('organization_id', activeOrganizationId)
-          .eq('evolution_instance_name', name)
+          .eq('evolution_instance_name', evoName)
         await reloadInstancesForOrgs(orgIds)
       }
       await loadInstances()
@@ -382,19 +398,21 @@ export default function Settings() {
   }
 
   // ── Rename instance (display name only) ────────────────────────────────────
-  const renameInstance = async (instanceName: string, displayName: string) => {
+  const renameInstance = async (evoInstanceName: string, displayName: string) => {
     const trimmed = displayName.trim()
-    if (!trimmed) { setRenaming(null); return }
-    setInstanceAction({ name: instanceName, op: 'rename' })
+    if (!trimmed || !activeOrganizationId) { setRenaming(null); return }
+    setInstanceAction({ name: evoInstanceName, op: 'rename' })
     try {
-      const updated = {
-        ...instanceEvo,
-        displayNames: { ...(instanceEvo.displayNames ?? {}), [instanceName]: trimmed },
-      }
-      await persistInstanceSettings({ evolution: updated })
-      setInstanceEvo(updated)
+      const { error: upErr } = await supabase
+        .from('instances')
+        .update({ name: trimmed })
+        .eq('organization_id', activeOrganizationId)
+        .eq('evolution_instance_name', evoInstanceName)
+      if (upErr) throw upErr
+      await reloadInstancesForOrgs(orgIds)
+      await loadInstances()
       setRenaming(null)
-      flash(`Renamed display for "${instanceName}"`)
+      flash(`Renamed to "${trimmed}"`)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -417,17 +435,22 @@ export default function Settings() {
   }
 
   // ── Get QR ─────────────────────────────────────────────────────────────────
-  const getQR = async (name: string) => {
-    setInstanceAction({ name, op: 'qr' })
+  const getQR = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
+    setInstanceAction({ name: evoName, op: 'qr' })
     setError(null)
     try {
-      const data = await evo('GET', `/instance/connect/${name}`)
+      const data = await evo('GET', `/instance/connect/${evoName}`)
       const base64 = data?.base64 ?? data?.qrcode?.base64 ?? null
       if (!base64) {
-        setError(`No QR returned — "${name}" may already be connected.`)
+        setError(`No QR returned — "${displayName}" may already be connected.`)
       } else {
         setQrCountdown(60)
-        setQrModal({ name, src: base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}` })
+        setQrModal({
+          evoName,
+          displayName,
+          src: base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`,
+        })
       }
     } catch (e) {
       setError(`QR failed: ${(e as Error).message}`)
@@ -445,14 +468,14 @@ export default function Settings() {
         if (n <= 1) {
           clearInterval(tick)
           // auto-refresh
-          getQR(qrModal.name)
+          getQR(qrModal.evoName)
           return 60
         }
         return n - 1
       })
     }, 1000)
     return () => clearInterval(tick)
-  }, [qrModal?.name, qrModal?.src]) // reset whenever a new QR image arrives
+  }, [qrModal?.evoName, qrModal?.src]) // reset whenever a new QR image arrives
 
   const _isBusy = (name: string, op?: string) =>
     instanceAction?.name === name && (!op || instanceAction.op === op)
@@ -546,7 +569,7 @@ export default function Settings() {
                 value={newInstanceName}
                 onChange={(e) => setNewInstanceName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && createInstance()}
-                placeholder="Instance name (e.g. mystore)"
+                placeholder="Display name (e.g. Personal, Autolust)"
                 className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                 autoFocus
               />
@@ -618,11 +641,11 @@ export default function Settings() {
                           </form>
                         ) : (
                           <button
-                            onClick={() => setRenaming({ name: inst.instanceName, value: settings.displayNames?.[inst.instanceName] ?? inst.instanceName })}
+                            onClick={() => setRenaming({ name: inst.instanceName, value: inst.displayName })}
                             className="font-medium text-gray-800 text-sm hover:text-green-700 hover:underline decoration-dotted"
                             title="Click to rename"
                           >
-                            {settings.displayNames?.[inst.instanceName] ?? inst.instanceName}
+                            {inst.displayName}
                           </button>
                         )}
                         {isActive && (
@@ -828,7 +851,7 @@ export default function Settings() {
           <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-xs w-full mx-4 text-center" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-semibold text-gray-800 mb-1">Scan to connect</h3>
             <p className="text-sm text-gray-500 mb-4">
-              Instance: <span className="font-mono">{qrModal.name}</span>
+              Instance: <span className="font-medium">{qrModal.displayName}</span>
             </p>
             <div className="relative w-56 h-56 mx-auto">
               <img src={qrModal.src} alt="WhatsApp QR code" className="w-full h-full rounded-xl border border-gray-200" />
@@ -847,7 +870,7 @@ export default function Settings() {
               <p className="text-xs text-gray-400">QR refreshes automatically</p>
             </div>
             <button
-              onClick={() => getQR(qrModal.name)}
+              onClick={() => getQR(qrModal.evoName)}
               className="mt-2 text-sm text-green-600 hover:text-green-700 underline block mx-auto"
             >
               Refresh QR now
