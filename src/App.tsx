@@ -3,11 +3,13 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useAuthStore } from './store/authStore'
 import { useTenantStore } from './store/tenantStore'
-import { loadTenantContext } from './lib/tenant'
+import { queryClient } from './lib/queryClient'
+import { tenantKeys } from './lib/queryKeys'
 import { requestNotificationPermission, showLocalNotification } from './lib/notifications'
 import ErrorBoundary from './components/ErrorBoundary'
 import InstallPWA from './components/InstallPWA'
 import SplashScreen from './components/SplashScreen'
+import TenantSync from './components/TenantSync'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import SetPassword from './pages/SetPassword'
@@ -76,14 +78,7 @@ function PageLoader() {
 
 export default function App() {
   const { setUser, setRole, setMember, setLoading, setIsPlatformAdmin } = useAuthStore()
-  const {
-    setOrganizations,
-    setInstances,
-    setActiveOrganizationId,
-    setActiveInstanceId,
-    setReady,
-    reset: resetTenant,
-  } = useTenantStore()
+  const { setReady, reset: resetTenant } = useTenantStore()
 
   useEffect(() => {
     let cancelled = false
@@ -95,6 +90,7 @@ export default function App() {
         setIsPlatformAdmin(false)
         setMember(false)
         resetTenant()
+        queryClient.removeQueries({ queryKey: tenantKeys.all })
         setLoading(false)
         return
       }
@@ -109,22 +105,13 @@ export default function App() {
         setIsPlatformAdmin(false)
         setMember(false)
         resetTenant()
+        queryClient.removeQueries({ queryKey: tenantKeys.all })
         setLoading(false)
         return
       }
 
-      const tenant = await loadTenantContext(user.id)
-      if (cancelled) return
-
-      setIsPlatformAdmin(tenant.isPlatformAdmin || isPlatformAdmin)
-      setOrganizations(tenant.organizations)
-      setInstances(tenant.instances)
-      setActiveOrganizationId(tenant.organizationId)
-      setActiveInstanceId(tenant.instanceId)
-      setRole(tenant.orgRole)
+      setIsPlatformAdmin(isPlatformAdmin)
       setMember(true)
-      setReady(true)
-      setLoading(false)
       requestNotificationPermission().catch(() => {})
     }
 
@@ -146,10 +133,6 @@ export default function App() {
     setMember,
     setLoading,
     setIsPlatformAdmin,
-    setOrganizations,
-    setInstances,
-    setActiveOrganizationId,
-    setActiveInstanceId,
     setReady,
     resetTenant,
   ])
@@ -168,6 +151,7 @@ export default function App() {
     <ErrorBoundary>
       <Toaster />
       <InstallPWA />
+      <TenantSync />
       <BootSplash>
         <BrowserRouter>
           <Routes>

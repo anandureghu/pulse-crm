@@ -1,29 +1,27 @@
 import { supabase } from './supabase'
 import { normalizePhoneForStorage } from './phone'
 import { requireTenantScope } from './tenant'
+import { fetchPlatformEvolutionSettings } from './platformSettings'
 import { selectActiveInstance, useTenantStore } from '../store/tenantStore'
 
 type EvoCfg = { apiUrl: string; apiKey: string; activeInstance: string }
 
-function loadEvoCfgFromActiveInstance(): EvoCfg {
+async function loadEvoCfgFromActiveInstance(): Promise<EvoCfg> {
   const inst = selectActiveInstance(useTenantStore.getState())
   if (!inst) {
     throw new Error('No active instance selected.')
   }
-  const evo = (inst.settings?.evolution ?? {}) as {
-    apiUrl?: string
-    apiKey?: string
-    activeInstance?: string
-  }
+  const global = await fetchPlatformEvolutionSettings()
+  const evo = (inst.settings?.evolution ?? {}) as { activeInstance?: string }
   const instanceName = inst.evolutionInstanceName || evo.activeInstance || ''
-  if (!evo.apiUrl || !evo.apiKey || !instanceName) {
-    throw new Error('Evolution API not configured for this instance. Go to Settings and save API URL, Key, and link an Evolution instance.')
+  if (!global.apiUrl || !global.apiKey || !instanceName) {
+    throw new Error('Evolution API not configured. Ask a platform admin to set API URL and Key in Admin, then link a WhatsApp instance in Settings.')
   }
-  return { apiUrl: evo.apiUrl, apiKey: evo.apiKey, activeInstance: instanceName }
+  return { apiUrl: global.apiUrl, apiKey: global.apiKey, activeInstance: instanceName }
 }
 
 async function evoPost(path: string, body: unknown, cfg?: EvoCfg) {
-  const c = cfg ?? loadEvoCfgFromActiveInstance()
+  const c = cfg ?? await loadEvoCfgFromActiveInstance()
   const base = c.apiUrl.replace(/\/$/, '')
   const res = await fetch(`${base}${path}`, {
     method: 'POST',
@@ -52,7 +50,7 @@ export async function sendMessageFn(body: {
 }): Promise<{ ok: boolean; messageId: string }> {
   const scope = requireTenantScope()
   if (!scope) throw new Error('No active organization/instance')
-  const cfg = loadEvoCfgFromActiveInstance()
+  const cfg = await loadEvoCfgFromActiveInstance()
 
   const { data: conv } = await supabase
     .from('conversations').select('customer_id').eq('id', body.conversationId).single()
@@ -107,7 +105,7 @@ export async function fetchMediaBase64(
   msgType: string,
 ): Promise<string | null> {
   try {
-    const cfg = loadEvoCfgFromActiveInstance()
+    const cfg = await loadEvoCfgFromActiveInstance()
     const jidPhone = normalizePhoneForStorage(phone)
     const res = await evoPost(
       `/chat/getBase64FromMediaMessage/${cfg.activeInstance}`,

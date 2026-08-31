@@ -1,66 +1,29 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
 import { toast } from '../components/Toast'
+import PlatformEvolutionSettings from '../components/PlatformEvolutionSettings'
+import {
+  useAdminOrganizations,
+  useCreateOrganization,
+  useSetOrganizationActive,
+} from '../hooks/useAdminOrganizations'
+import type { AdminOrgRow } from '../lib/manageOrg'
 
-type OrgInstance = {
-  id: string
-  name: string
-  evolution_instance_name: string | null
-  active: boolean
-}
-
-type OrgRow = {
-  id: string
-  name: string
-  slug: string
-  active: boolean
-  created_at: string
-  memberCount: number
-  instanceCount: number
-  instances: OrgInstance[]
-}
+type AdminTab = 'integration' | 'organizations'
 
 export default function Admin() {
   const isPlatformAdmin = useAuthStore((s) => s.isPlatformAdmin)
-  const [orgs, setOrgs] = useState<OrgRow[]>([])
-  const [loading, setLoading] = useState(true)
+  const { data: orgs = [], isLoading: loading } = useAdminOrganizations()
+  const createOrg = useCreateOrganization()
+  const setOrgActive = useSetOrganizationActive()
+
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [tab, setTab] = useState<AdminTab>('integration')
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [adminEmail, setAdminEmail] = useState('')
-  const [creating, setCreating] = useState(false)
-
-  const invoke = async (body: Record<string, unknown>) => {
-    const { data: { session } } = await supabase.auth.getSession()
-    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-org`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session?.access_token}`,
-      },
-      body: JSON.stringify(body),
-    })
-    const json = await res.json()
-    if (!res.ok) throw new Error(json.error ?? 'Request failed')
-    return json
-  }
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await invoke({ action: 'list' })
-      setOrgs(data.organizations ?? [])
-    } catch (e) {
-      toast((e as Error).message, 'error')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
 
   if (!isPlatformAdmin) return <Navigate to="/" replace />
 
@@ -69,10 +32,8 @@ export default function Admin() {
       toast('Name and admin email required', 'error')
       return
     }
-    setCreating(true)
     try {
-      await invoke({
-        action: 'create',
+      await createOrg.mutateAsync({
         name: name.trim(),
         slug: slug.trim() || undefined,
         adminEmail: adminEmail.trim(),
@@ -82,19 +43,15 @@ export default function Admin() {
       setName('')
       setSlug('')
       setAdminEmail('')
-      await load()
     } catch (e) {
       toast((e as Error).message, 'error')
-    } finally {
-      setCreating(false)
     }
   }
 
-  const toggleActive = async (org: OrgRow) => {
+  const toggleActive = async (org: AdminOrgRow) => {
     try {
-      await invoke({ action: 'set_active', organizationId: org.id, active: !org.active })
+      await setOrgActive.mutateAsync({ organizationId: org.id, active: !org.active })
       toast(org.active ? 'Organization disabled' : 'Organization enabled', 'success')
-      await load()
     } catch (e) {
       toast((e as Error).message, 'error')
     }
@@ -102,10 +59,39 @@ export default function Admin() {
 
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto w-full">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold text-gray-800">Platform Admin</h2>
+        <p className="text-sm text-gray-500 mt-0.5">Global integration settings and organization management</p>
+      </div>
+
+      <div className="flex gap-1 mb-6 border-b border-gray-200">
+        {([
+          ['integration', 'Platform integration'],
+          ['organizations', 'Organizations'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === id
+                ? 'border-green-600 text-green-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'integration' && <PlatformEvolutionSettings />}
+
+      {tab === 'organizations' && (
+        <>
       <div className="flex items-center justify-between gap-3 mb-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">Platform Admin</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Create and manage organizations</p>
+          <h3 className="text-base font-semibold text-gray-800">Organizations</h3>
+          <p className="text-sm text-gray-500 mt-0.5">Create and manage tenant organizations</p>
         </div>
         <button
           onClick={() => setShowCreate(true)}
@@ -156,10 +142,10 @@ export default function Admin() {
               </button>
               <button
                 onClick={handleCreate}
-                disabled={creating}
+                disabled={createOrg.isPending}
                 className="flex-1 bg-green-600 text-white rounded-lg py-2 text-sm disabled:opacity-50"
               >
-                {creating ? 'Creating…' : 'Create'}
+                {createOrg.isPending ? 'Creating…' : 'Create'}
               </button>
             </div>
           </div>
@@ -196,7 +182,8 @@ export default function Admin() {
                   </button>
                   <button
                     onClick={() => toggleActive(org)}
-                    className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50"
+                    disabled={setOrgActive.isPending}
+                    className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 disabled:opacity-50"
                   >
                     {org.active ? 'Disable' : 'Enable'}
                   </button>
@@ -230,6 +217,8 @@ export default function Admin() {
           </ul>
         )}
       </div>
+        </>
+      )}
     </div>
   )
 }

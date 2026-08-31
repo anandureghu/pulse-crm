@@ -1,7 +1,10 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useTenantStore, selectActiveInstance } from '../store/tenantStore'
 import { reloadInstancesForOrgs } from '../lib/tenant'
+import { usePlatformEvolutionSettings } from '../hooks/usePlatformEvolutionSettings'
 
 interface AiConfig {
   apiKey: string
@@ -17,12 +20,15 @@ interface ShopifyConfig {
   apiVersion: string
 }
 
-interface EvolutionSettings {
-  apiUrl: string
+interface InstanceEvolutionSettings {
   activeInstance: string
+  displayNames?: Record<string, string>
+}
+
+type EvoRuntimeSettings = InstanceEvolutionSettings & {
+  apiUrl: string
   apiKey: string
   webhookUrl: string
-  displayNames?: Record<string, string>
 }
 
 interface Instance {
@@ -63,11 +69,13 @@ const STATUS_LABEL: Record<string, string> = {
 export default function Settings() {
   const activeOrganizationId = useTenantStore((s) => s.activeOrganizationId)
   const activeInstanceId = useTenantStore((s) => s.activeInstanceId)
-  const orgIds = useTenantStore((s) => s.organizations.map((o) => o.id))
+  const orgIds = useTenantStore(useShallow((s) => s.organizations.map((o) => o.id)))
   const crmInstance = useTenantStore(selectActiveInstance)
+  const { data: platformEvo } = usePlatformEvolutionSettings()
 
-  const [settings, setSettings] = useState<EvolutionSettings>({
-    apiUrl: '', activeInstance: '', apiKey: '', webhookUrl: '',
+  const [instanceEvo, setInstanceEvo] = useState<InstanceEvolutionSettings>({
+    activeInstance: '',
+    displayNames: {},
   })
   const [aiConfig, setAiConfig] = useState<AiConfig>({
     apiKey: '', model: 'gpt-4o-mini', systemPrompt: '', enabled: false,
@@ -79,10 +87,17 @@ export default function Settings() {
   })
   const [shopifySaved, setShopifySaved] = useState(false)
   const [shopifySaving, setShopifySaving] = useState(false)
+  const settings = useMemo<EvoRuntimeSettings>(() => ({
+    apiUrl: platformEvo?.apiUrl ?? '',
+    apiKey: platformEvo?.apiKey ?? '',
+    webhookUrl: platformEvo?.webhookUrl ?? '',
+    activeInstance: instanceEvo.activeInstance,
+    displayNames: instanceEvo.displayNames,
+  }), [platformEvo, instanceEvo])
+
   const settingsRef = useRef(settings)
   useEffect(() => { settingsRef.current = settings }, [settings])
 
-  const [saved, setSaved] = useState(false)
   const [instances, setInstances] = useState<Instance[]>([])
   const [loadingInstances, setLoadingInstances] = useState(false)
   const [instanceAction, setInstanceAction] = useState<InstanceAction | null>(null)
@@ -95,7 +110,7 @@ export default function Settings() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   const persistInstanceSettings = async (patch: {
-    evolution?: EvolutionSettings
+    evolution?: InstanceEvolutionSettings
     ai_config?: AiConfig
     shopify_config?: ShopifyConfig
     evolutionInstanceName?: string | null
@@ -121,12 +136,9 @@ export default function Settings() {
   // ── Load from active CRM instance ──────────────────────────────────────────
   useEffect(() => {
     if (!crmInstance) return
-    const evo = (crmInstance.settings.evolution ?? {}) as Partial<EvolutionSettings>
-    setSettings({
-      apiUrl: evo.apiUrl ?? '',
+    const evo = (crmInstance.settings.evolution ?? {}) as Partial<InstanceEvolutionSettings & { activeInstance?: string }>
+    setInstanceEvo({
       activeInstance: crmInstance.evolutionInstanceName ?? evo.activeInstance ?? '',
-      apiKey: evo.apiKey ?? '',
-      webhookUrl: evo.webhookUrl ?? '',
       displayNames: evo.displayNames ?? {},
     })
     const ai = (crmInstance.settings.ai_config ?? {}) as Partial<AiConfig>
@@ -224,17 +236,7 @@ export default function Settings() {
     if (apiUrl && apiKey) loadInstances()
   }, [apiUrl, apiKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Save ───────────────────────────────────────────────────────────────────
-  const handleSave = async () => {
-    try {
-      await persistInstanceSettings({ evolution: settings })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }
-
+  // ── Save instance display names ────────────────────────────────────────────
   const flash = (msg: string) => {
     setSuccessMsg(msg)
     setTimeout(() => setSuccessMsg(null), 3000)
@@ -242,8 +244,8 @@ export default function Settings() {
 
   // ── Link Evolution WA instance to this CRM instance ────────────────────────
   const switchInstance = async (name: string) => {
-    const updated = { ...settings, activeInstance: name }
-    setSettings(updated)
+    const updated = { ...instanceEvo, activeInstance: name }
+    setInstanceEvo(updated)
     try {
       await persistInstanceSettings({
         evolution: updated,
@@ -260,7 +262,7 @@ export default function Settings() {
   const setWebhook = async (name: string) => {
     const webhookUrl = settingsRef.current.webhookUrl.trim()
     if (!webhookUrl) {
-      setError('Enter your Edge Function webhook URL in the Webhook Configuration section first.')
+      setError('Webhook URL is not configured. Ask a platform admin to set it under Admin → Platform integration.')
       return
     }
     setInstanceAction({ name, op: 'webhook' })
@@ -305,7 +307,7 @@ export default function Settings() {
         name,
         evolution_instance_name: name,
         settings: {
-          evolution: { ...settings, activeInstance: name },
+          evolution: { activeInstance: name, displayNames: {} },
           ai_config: aiConfig,
           shopify_config: shopifyConfig,
         },
@@ -331,9 +333,9 @@ export default function Settings() {
     setError(null)
     try {
       await evo('DELETE', `/instance/delete/${name}`)
-      if (settings.activeInstance === name) {
-        const updated = { ...settings, activeInstance: '' }
-        setSettings(updated)
+      if (instanceEvo.activeInstance === name) {
+        const updated = { ...instanceEvo, activeInstance: '' }
+        setInstanceEvo(updated)
         await persistInstanceSettings({ evolution: updated, evolutionInstanceName: null })
       }
       // Soft-deactivate matching CRM instances in this org
@@ -360,11 +362,11 @@ export default function Settings() {
     setInstanceAction({ name: instanceName, op: 'rename' })
     try {
       const updated = {
-        ...settingsRef.current,
-        displayNames: { ...(settingsRef.current.displayNames ?? {}), [instanceName]: trimmed },
+        ...instanceEvo,
+        displayNames: { ...(instanceEvo.displayNames ?? {}), [instanceName]: trimmed },
       }
       await persistInstanceSettings({ evolution: updated })
-      setSettings(updated)
+      setInstanceEvo(updated)
       setRenaming(null)
       flash(`Renamed display for "${instanceName}"`)
     } catch (e) {
@@ -462,50 +464,18 @@ export default function Settings() {
       <p className="text-sm text-gray-500 mb-4 max-w-2xl">
         Configuring the active CRM instance
         {crmInstance ? ` “${crmInstance.name}”` : ''}. Switch instances from the header.
+        Evolution API credentials are managed globally under{' '}
+        <Link to="/admin" className="text-green-600 hover:text-green-700 underline">Admin → Platform integration</Link>.
       </p>
       <div className="max-w-2xl space-y-5">
 
-        {/* ── API Connection ── */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="font-semibold text-gray-700 mb-4">Evolution API Connection</h3>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">API URL</label>
-              <input
-                type="text"
-                value={settings.apiUrl}
-                onChange={(e) => setSettings((s) => ({ ...s, apiUrl: e.target.value }))}
-                placeholder="https://whatsappcrm.share.zrok.io"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">API Key</label>
-              <input
-                type="password"
-                value={settings.apiKey}
-                onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
-                placeholder="changeme123"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-              <p className="text-xs text-gray-400 mt-1">
-                <code className="bg-gray-100 px-1 rounded">AUTHENTICATION_API_KEY</code> in docker-compose
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={handleSave} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">
-                {saved ? '✓ Saved' : 'Save'}
-              </button>
-              <button
-                onClick={loadInstances}
-                disabled={loadingInstances}
-                className="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40"
-              >
-                {loadingInstances ? 'Loading…' : 'Refresh Instances'}
-              </button>
-            </div>
+        {(!platformEvo?.apiUrl || !platformEvo?.apiKey) && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+            Evolution API URL and key are not configured yet. A platform admin must set them under{' '}
+            <Link to="/admin" className="font-medium underline">Admin → Platform integration</Link>{' '}
+            before WhatsApp instances can be managed here.
           </div>
-        </div>
+        )}
 
         {/* ── Alerts ── */}
         {error && (
@@ -523,14 +493,24 @@ export default function Settings() {
 
         {/* ── Instances ── */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
             <h3 className="font-semibold text-gray-700">WhatsApp Instances</h3>
-            <button
-              onClick={() => setShowCreate((v) => !v)}
-              className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700"
-            >
-              + New Instance
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={loadInstances}
+                disabled={loadingInstances || !settings.apiUrl || !settings.apiKey}
+                className="border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40"
+              >
+                {loadingInstances ? 'Loading…' : 'Refresh instances'}
+              </button>
+              <button
+                onClick={() => setShowCreate((v) => !v)}
+                disabled={!settings.apiUrl || !settings.apiKey}
+                className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 disabled:opacity-40"
+              >
+                + New Instance
+              </button>
+            </div>
           </div>
 
           {showCreate && (
@@ -703,45 +683,6 @@ export default function Settings() {
                 </div>
               )
             })}
-          </div>
-        </div>
-
-        {/* ── Webhook Configuration ── */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="font-semibold text-gray-700 mb-3">Webhook Configuration</h3>
-          <p className="text-sm text-gray-600 mb-3">
-            This URL receives WhatsApp events from Evolution API.
-            Deploy Supabase Edge Functions first, then paste the URL here.
-          </p>
-
-          <div className="mb-3">
-            <label className="block text-sm text-gray-600 mb-1">Edge Function URL</label>
-            <input
-              type="text"
-              value={settings.webhookUrl}
-              onChange={(e) => setSettings((s) => ({ ...s, webhookUrl: e.target.value }))}
-              placeholder="https://YOUR-PROJECT.supabase.co/functions/v1/evolution-webhook"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
-            />
-          </div>
-
-          <button onClick={handleSave} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 mb-4">
-            {saved ? '✓ Saved' : 'Save'}
-          </button>
-
-          <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-2">
-            <p className="font-medium text-gray-700">Deploy Supabase Edge Functions</p>
-            <pre className="text-xs text-gray-600 bg-white rounded border border-gray-200 p-3 overflow-x-auto">{`supabase secrets set EVOLUTION_API_KEY=... EVOLUTION_API_URL=... EVOLUTION_INSTANCE=...
-supabase functions deploy`}</pre>
-            <p className="text-xs text-gray-400">
-              After deploy, copy the <code className="bg-gray-100 px-1 rounded">evolution-webhook</code> URL and paste above.
-            </p>
-          </div>
-
-          <div className="mt-3 text-xs text-gray-400">
-            Events configured: <code className="bg-gray-100 px-1 rounded">MESSAGES_UPSERT</code>{' '}
-            <code className="bg-gray-100 px-1 rounded">MESSAGES_UPDATE</code>{' '}
-            <code className="bg-gray-100 px-1 rounded">CONNECTION_UPDATE</code>
           </div>
         </div>
 

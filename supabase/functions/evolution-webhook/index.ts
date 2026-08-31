@@ -106,15 +106,20 @@ function messageType(data: EvolutionWebhookMessage['data']): string {
   return 'text'
 }
 
-function evoCfgFromInstance(tenant: TenantInstance): { apiUrl: string; apiKey: string; activeInstance: string } | null {
-  const evo = (tenant.settings?.evolution ?? {}) as {
-    apiUrl?: string
-    apiKey?: string
-    activeInstance?: string
-  }
+async function evoCfgFromInstance(
+  supabase: ReturnType<typeof makeServiceClient>,
+  tenant: TenantInstance,
+): Promise<{ apiUrl: string; apiKey: string; activeInstance: string } | null> {
+  const evo = (tenant.settings?.evolution ?? {}) as { activeInstance?: string; apiUrl?: string; apiKey?: string }
   const activeInstance = tenant.evolution_instance_name || evo.activeInstance || ''
-  if (!evo.apiUrl || !evo.apiKey || !activeInstance) return null
-  return { apiUrl: evo.apiUrl, apiKey: evo.apiKey, activeInstance }
+  if (!activeInstance) return null
+
+  const { data: row } = await supabase.from('settings').select('value').eq('key', 'evolution').maybeSingle()
+  const global = (row?.value ?? {}) as { apiUrl?: string; apiKey?: string }
+  const apiUrl = global.apiUrl || evo.apiUrl
+  const apiKey = global.apiKey || evo.apiKey
+  if (!apiUrl || !apiKey) return null
+  return { apiUrl, apiKey, activeInstance }
 }
 
 async function storeMedia(
@@ -199,7 +204,7 @@ async function handleMessageUpsert(
 
   let media: string | null = null
   if (type !== 'text') {
-    const cfg = evoCfgFromInstance(tenant)
+    const cfg = await evoCfgFromInstance(supabase, tenant)
     if (cfg) {
       media = await storeMedia(supabase, messageId, remoteJid, type, cfg, fromMe)
     }
