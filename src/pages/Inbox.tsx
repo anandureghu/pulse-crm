@@ -9,6 +9,7 @@ import { useAuthStore } from '../store/authStore'
 import { sendMessageFn, assignEnquiryFn } from '../lib/functions'
 import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
+import { formatConversationTime } from '../lib/datetime'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
 import type { Conversation, EnquiryStatus, Message } from '../types'
@@ -38,18 +39,6 @@ function statusColor(status: string): string {
     duplicate: 'bg-red-100 text-red-600',
   }
   return map[status] ?? 'bg-gray-100 text-gray-600'
-}
-
-function smartTimestamp(iso: string): string {
-  const date = new Date(iso)
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-  if (now.getTime() - date.getTime() < 7 * 24 * 60 * 60 * 1000) {
-    return date.toLocaleDateString([], { weekday: 'short' })
-  }
-  return date.toLocaleDateString([], { day: 'numeric', month: 'short' })
 }
 
 export default function Inbox() {
@@ -386,7 +375,7 @@ export default function Inbox() {
                     {customerName(c)}
                   </span>
                   <span className="text-xs text-gray-400 flex-shrink-0">
-                    {c.updatedAt ? smartTimestamp(c.updatedAt) : ''}
+                    {formatConversationTime(c.updatedAt)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-1 gap-2">

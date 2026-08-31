@@ -92,6 +92,7 @@ export async function sendMessageFn(body: {
 
   await supabase.from('conversations').update({
     last_message: body.text ?? `[${body.mediaType}]`,
+    updated_at: new Date().toISOString(),
   }).eq('id', body.conversationId)
 
   return { ok: true, messageId: evoMsgId }

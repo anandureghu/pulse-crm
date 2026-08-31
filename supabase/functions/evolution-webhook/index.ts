@@ -1,5 +1,6 @@
 import { makeServiceClient, json, err } from '../_shared/supabase.ts'
 import type { EvolutionWebhookMessage, EvolutionWebhookStatus } from '../_shared/types.ts'
+import { parseEvolutionTimestamp } from '../_shared/datetime.ts'
 
 type TenantInstance = {
   id: string
@@ -193,9 +194,7 @@ async function handleMessageUpsert(
 
   const text = extractText(data)
   const type = messageType(data)
-  const timestamp = new Date(
-    (typeof data.messageTimestamp === 'number' ? data.messageTimestamp : Number(data.messageTimestamp)) * 1000,
-  ).toISOString()
+  const timestamp = parseEvolutionTimestamp(data.messageTimestamp)
   const messageId = data.key.id
   if (!messageId) return
 
@@ -263,16 +262,16 @@ async function handleMessageUpsert(
   const lastMsg = text || (media ? `[${type}]` : '')
   const sender = fromMe ? 'agent' : 'customer'
 
+  const convPatch = { last_message: lastMsg, updated_at: timestamp }
+
   if (existingConv) {
     conversationId = existingConv.id
     if (fromMe) {
-      await supabase.from('conversations').update({
-        last_message: lastMsg,
-      }).eq('id', conversationId)
+      await supabase.from('conversations').update(convPatch).eq('id', conversationId)
     } else {
       const { data: conv } = await supabase.from('conversations').select('unread_count').eq('id', conversationId).single()
       await supabase.from('conversations').update({
-        last_message: lastMsg,
+        ...convPatch,
         unread_count: (conv?.unread_count ?? 0) + 1,
       }).eq('id', conversationId)
     }
@@ -283,6 +282,7 @@ async function handleMessageUpsert(
         customer_id: customerId,
         last_message: lastMsg,
         unread_count: fromMe ? 0 : 1,
+        updated_at: timestamp,
         organization_id: orgId,
         instance_id: instanceId,
       })

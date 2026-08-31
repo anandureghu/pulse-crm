@@ -265,14 +265,44 @@ export function subscribeToConversations(
   scope: TenantScope,
   onData: (convs: Conversation[]) => void
 ): Unsubscribe {
-  const fetch = () =>
-    supabase
+  const fetch = async () => {
+    const { data: rows } = await supabase
       .from('conversations')
       .select('*')
       .eq('organization_id', scope.organizationId)
       .eq('instance_id', scope.instanceId)
       .order('updated_at', { ascending: false })
-      .then(({ data }) => onData((data ?? []).map(fromRow<Conversation>)))
+
+    const convRows = rows ?? []
+    if (convRows.length === 0) {
+      onData([])
+      return
+    }
+
+    const ids = convRows.map((r) => r.id as string)
+    const { data: msgRows } = await supabase
+      .from('messages')
+      .select('conversation_id, timestamp')
+      .in('conversation_id', ids)
+      .order('timestamp', { ascending: false })
+
+    const lastMsgAt = new Map<string, string>()
+    for (const m of msgRows ?? []) {
+      const cid = m.conversation_id as string
+      const ts = m.timestamp as string
+      if (!lastMsgAt.has(cid) && ts) lastMsgAt.set(cid, ts)
+    }
+
+    const convs = convRows.map((row) => {
+      const conv = fromRow<Conversation>(row as Record<string, unknown>)
+      const latest = lastMsgAt.get(conv.id)
+      if (latest) conv.updatedAt = latest
+      return conv
+    })
+
+    convs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    onData(convs)
+  }
 
   fetch()
 
