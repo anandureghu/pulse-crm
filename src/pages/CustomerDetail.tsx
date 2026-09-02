@@ -31,7 +31,7 @@ const TABS: { key: Tab; label: string }[] = [
 ]
 
 const STATUSES = [
-  'new_lead', 'assigned', 'contact_attempted', 'interested',
+  'new_lead', 'assigned', 'contact_attempted', 'interested', 'confused',
   'follow_up_required', 'negotiation', 'ready_to_buy',
   'payment_pending', 'sale_completed', 'after_sales', 'repeat_customer',
   'not_interested', 'lost', 'spam', 'duplicate',
@@ -700,6 +700,7 @@ function statusColor(status: string) {
   const map: Record<string, string> = {
     new_lead: 'bg-gray-100 text-gray-600',
     interested: 'bg-yellow-100 text-yellow-700',
+    confused: 'bg-indigo-100 text-indigo-700',
     negotiation: 'bg-purple-100 text-purple-700',
     sale_completed: 'bg-green-100 text-green-700',
     lost: 'bg-red-100 text-red-600',
