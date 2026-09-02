@@ -553,6 +553,7 @@ function statusColor(status: string) {
     assigned: 'bg-blue-100 text-blue-700',
     contact_attempted: 'bg-sky-100 text-sky-700',
     interested: 'bg-amber-100 text-amber-800',
+    confused: 'bg-indigo-100 text-indigo-700',
     follow_up_required: 'bg-orange-100 text-orange-700',
     negotiation: 'bg-violet-100 text-violet-700',
     ready_to_buy: 'bg-teal-100 text-teal-700',

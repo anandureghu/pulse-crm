@@ -3,6 +3,7 @@ export type EnquiryStatus =
   | 'assigned'
   | 'contact_attempted'
   | 'interested'
+  | 'confused'
   | 'follow_up_required'
   | 'negotiation'
   | 'ready_to_buy'
