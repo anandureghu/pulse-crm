@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { InboxShortcutsPanel } from '../components/InboxShortcutsPanel'
 
 interface AiConfig {
   apiKey: string
@@ -743,6 +744,8 @@ supabase functions deploy`}</pre>
             </button>
           </div>
         </div>
+
+        <InboxShortcutsPanel />
 
         {/* ── AI Configuration ── */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">

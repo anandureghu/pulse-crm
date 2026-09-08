@@ -92,3 +92,51 @@ export interface EnrichedFollowup extends Followup {
   customerName: string
   customerPhone: string | null
 }
+
+export type InboxSnippetKind = 'reply' | 'product'
+
+export interface InboxSnippet {
+  id: string
+  ownerId: string
+  kind: InboxSnippetKind
+  title: string
+  body: string
+  imageUrl: string | null
+  price: string | null
+  productUrl: string | null
+  shopifyProductId: number | null
+  shopifyVariantId: number | null
+  sku: string | null
+  variantTitle: string | null
+  shared: boolean
+  sharedWith: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type InboxSnippetInput = Omit<InboxSnippet, 'id' | 'createdAt' | 'updatedAt' | 'ownerId'> & {
+  ownerId?: string
+}
+
+export interface CatalogVariant {
+  variantId: number
+  productId: number
+  title: string
+  variantTitle: string
+  sku: string
+  price: string
+  currency: string
+  imageUrl: string
+  handle: string
+  productUrl: string
+}
+
+export interface SendableProduct {
+  title: string
+  variantTitle?: string | null
+  sku?: string | null
+  price?: string | null
+  imageUrl?: string | null
+  productUrl?: string | null
+  body?: string | null
+}
