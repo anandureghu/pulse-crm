@@ -11,7 +11,10 @@ import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
-import type { Conversation, EnquiryStatus, Message } from '../types'
+import { SlashCommandPicker } from '../components/SlashCommandPicker'
+import { parseSlashInput } from '../lib/slashCommands'
+import { formatProductCaption } from '../lib/shopifyProducts'
+import type { Conversation, EnquiryStatus, Message, SendableProduct } from '../types'
 
 type AssigneeFilter = 'all' | 'me' | 'other'
 
@@ -75,6 +78,7 @@ export default function Inbox() {
   const [assigning, setAssigning] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const slashKeyRef = useRef<((e: React.KeyboardEvent) => boolean) | null>(null)
 
   const messages = useMessages(selected)
   const conv = conversations.find((c) => c.id === selected)
@@ -205,6 +209,7 @@ export default function Inbox() {
 
   const handleSend = async () => {
     if (!text.trim() || !selected || sending) return
+    if (parseSlashInput(text).open) return
     const msgText = text.trim()
     setSending(true)
     setText('')
@@ -231,7 +236,41 @@ export default function Inbox() {
     }
   }
 
+  const handleSendProduct = async (product: SendableProduct) => {
+    if (!selected || sending) return
+    const caption = formatProductCaption(product)
+    const mediaUrl = product.imageUrl?.trim() || undefined
+    setSending(true)
+    setText('')
+
+    const tmpMsg: Message = {
+      id: `tmp-${Date.now()}`,
+      conversationId: selected,
+      sender: 'agent',
+      type: mediaUrl ? 'image' : 'text',
+      text: caption,
+      media: mediaUrl,
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+    }
+    setOptimistic((prev) => [...prev, tmpMsg])
+
+    try {
+      await sendMessageFn({
+        conversationId: selected,
+        text: caption,
+        ...(mediaUrl ? { mediaUrl, mediaType: 'image' } : {}),
+      })
+    } catch {
+      setOptimistic((prev) => prev.filter((m) => m.id !== tmpMsg.id))
+      toast('Failed to send product', 'error')
+    } finally {
+      setSending(false)
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (slashKeyRef.current?.(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -609,35 +648,43 @@ export default function Inbox() {
               </div>
             )}
 
-            <div className="bg-white border-t border-gray-200 p-3 flex gap-2 items-end">
-              <button
-                onClick={handleAiSuggest}
-                disabled={aiLoading}
-                title="Get AI suggested reply"
-                className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
-              >
-                {aiLoading ? (
-                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                ) : '✨'}
-              </button>
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type a message… (Enter to send)"
-                rows={1}
-                className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+            <div className="relative bg-white border-t border-gray-200 p-3">
+              <SlashCommandPicker
+                text={text}
+                onChange={setText}
+                onSendProduct={handleSendProduct}
+                onKeyIntercept={(handler) => { slashKeyRef.current = handler }}
               />
-              <button
-                onClick={handleSend}
-                disabled={!text.trim() || sending}
-                className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
-              >
-                ➤
-              </button>
+              <div className="flex gap-2 items-end">
+                <button
+                  onClick={handleAiSuggest}
+                  disabled={aiLoading}
+                  title="Get AI suggested reply"
+                  className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
+                >
+                  {aiLoading ? (
+                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                  ) : '✨'}
+                </button>
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a message…  /products  /reply"
+                  rows={1}
+                  className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={!text.trim() || sending || parseSlashInput(text).open}
+                  className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
+                >
+                  ➤
+                </button>
+              </div>
             </div>
           </>
         ) : (

@@ -151,4 +151,5 @@ Lost branch: Not Interested / Lost / Spam / Duplicate
 ## Database Tables
 
 `users` · `customers` · `enquiries` · `conversations` · `messages` ·
-`notes` · `activities` · `followups` · `tags` · `settings` · `shopify_orders`
+`notes` · `activities` · `followups` · `tags` · `settings` · `shopify_orders` ·
+`inbox_snippets`

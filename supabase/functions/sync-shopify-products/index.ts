@@ -8,17 +8,34 @@ import {
   type ShopifyProductsCache,
 } from '../_shared/shopify.ts'
 
+interface ShopifyImage {
+  id: number
+  src: string
+}
+
 interface ShopifyVariant {
   id: number
   title: string
   sku: string | null
   price: string
+  image_id?: number | null
 }
 
 interface ShopifyProduct {
   id: number
   title: string
+  handle?: string
+  image?: ShopifyImage | null
+  images?: ShopifyImage[]
   variants: ShopifyVariant[]
+}
+
+function variantImageUrl(product: ShopifyProduct, variant: ShopifyVariant): string {
+  if (variant.image_id && product.images?.length) {
+    const match = product.images.find((img) => img.id === variant.image_id)
+    if (match?.src) return match.src
+  }
+  return product.image?.src ?? product.images?.[0]?.src ?? ''
 }
 
 Deno.serve(async (req) => {
@@ -37,7 +54,8 @@ Deno.serve(async (req) => {
     const cfg = await loadShopifyConfig()
     const byPrice: Record<string, CachedVariant[]> = {}
     let rawCount = 0
-    let nextUrl: string | null = `/products.json?limit=250&fields=id,title,variants`
+    let nextUrl: string | null =
+      `/products.json?limit=250&fields=id,title,handle,image,images,variants`
 
     while (nextUrl) {
       const { data, link } = await shopifyFetch<{ products: ShopifyProduct[] }>(cfg, nextUrl)
@@ -53,6 +71,8 @@ Deno.serve(async (req) => {
             sku: variant.sku ?? '',
             price: normalizePriceKey(variant.price),
             currency: 'INR',
+            imageUrl: variantImageUrl(product, variant),
+            handle: product.handle ?? '',
           }
           if (!byPrice[key]) byPrice[key] = []
           byPrice[key].push(entry)
@@ -65,6 +85,7 @@ Deno.serve(async (req) => {
       byPrice,
       syncedAt: new Date().toISOString(),
       rawCount,
+      shopDomain: cfg.shopDomain,
     }
 
     const { error: upsertErr } = await supabase.from('settings').upsert({

@@ -11,6 +11,8 @@ interface CachedVariant {
   sku: string
   price: string
   currency: string
+  imageUrl?: string
+  handle?: string
 }
 
 interface ShopifyProductsCache {
