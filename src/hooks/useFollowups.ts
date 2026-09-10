@@ -7,20 +7,29 @@ import {
   deleteFollowup,
   enrichFollowups,
 } from '../lib/db'
+import { useTenantStore } from '../store/tenantStore'
 import type { EnrichedFollowup, Followup } from '../types'
 import { toast } from '../components/Toast'
 
 export function useFollowups() {
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [all, setAll] = useState<Followup[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = subscribeToAllFollowups((data) => {
+    if (!organizationId || !instanceId) {
+      setAll([])
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    const unsub = subscribeToAllFollowups({ organizationId, instanceId }, (data) => {
       setAll(data)
       setLoading(false)
     })
     return unsub
-  }, [])
+  }, [organizationId, instanceId])
 
   const pending = useMemo(() => all.filter((f) => !f.completed), [all])
   const completed = useMemo(() => all.filter((f) => f.completed), [all])

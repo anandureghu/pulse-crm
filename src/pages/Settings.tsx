@@ -1,6 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { InboxShortcutsPanel } from '../components/InboxShortcutsPanel'
+import { useTenantStore, selectActiveInstance, selectOrgInstances } from '../store/tenantStore'
+import { reloadInstancesForOrgs } from '../lib/tenant'
+import { usePlatformEvolutionSettings } from '../hooks/usePlatformEvolutionSettings'
 
 interface AiConfig {
   apiKey: string
@@ -13,19 +18,23 @@ interface ShopifyConfig {
   shopDomain: string
   clientId: string
   clientSecret: string
-  apiVersion: string
 }
 
-interface EvolutionSettings {
-  apiUrl: string
+interface InstanceEvolutionSettings {
   activeInstance: string
+  displayNames?: Record<string, string>
+}
+
+type EvoRuntimeSettings = InstanceEvolutionSettings & {
+  apiUrl: string
   apiKey: string
   webhookUrl: string
-  displayNames?: Record<string, string>
 }
 
 interface Instance {
   instanceName: string
+  displayName: string
+  crmInstanceId?: string
   instanceId?: string
   connectionStatus?: string
   ownerJid?: string
@@ -33,6 +42,10 @@ interface Instance {
   profilePicUrl?: string
   integration?: string
   webhookConfigured?: boolean
+}
+
+function newEvolutionInstanceName(): string {
+  return crypto.randomUUID()
 }
 
 type InstanceAction = { name: string; op: string }
@@ -60,8 +73,16 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function Settings() {
-  const [settings, setSettings] = useState<EvolutionSettings>({
-    apiUrl: '', activeInstance: '', apiKey: '', webhookUrl: '',
+  const activeOrganizationId = useTenantStore((s) => s.activeOrganizationId)
+  const activeInstanceId = useTenantStore((s) => s.activeInstanceId)
+  const orgIds = useTenantStore(useShallow((s) => s.organizations.map((o) => o.id)))
+  const orgCrmInstances = useTenantStore(useShallow(selectOrgInstances))
+  const crmInstance = useTenantStore(selectActiveInstance)
+  const { data: platformEvo } = usePlatformEvolutionSettings()
+
+  const [instanceEvo, setInstanceEvo] = useState<InstanceEvolutionSettings>({
+    activeInstance: '',
+    displayNames: {},
   })
   const [aiConfig, setAiConfig] = useState<AiConfig>({
     apiKey: '', model: 'gpt-4o-mini', systemPrompt: '', enabled: false,
@@ -69,69 +90,85 @@ export default function Settings() {
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
   const [shopifyConfig, setShopifyConfig] = useState<ShopifyConfig>({
-    shopDomain: '', clientId: '', clientSecret: '', apiVersion: '2026-07',
+    shopDomain: '', clientId: '', clientSecret: '',
   })
   const [shopifySaved, setShopifySaved] = useState(false)
   const [shopifySaving, setShopifySaving] = useState(false)
+  const settings = useMemo<EvoRuntimeSettings>(() => ({
+    apiUrl: platformEvo?.apiUrl ?? '',
+    apiKey: platformEvo?.apiKey ?? '',
+    webhookUrl: platformEvo?.webhookUrl ?? '',
+    activeInstance: instanceEvo.activeInstance,
+    displayNames: instanceEvo.displayNames,
+  }), [platformEvo, instanceEvo])
+
+  const orgLinkedEvoNames = useMemo(
+    () => orgCrmInstances
+      .map((i) => i.evolutionInstanceName)
+      .filter((name): name is string => Boolean(name)),
+    [orgCrmInstances],
+  )
+
   const settingsRef = useRef(settings)
   useEffect(() => { settingsRef.current = settings }, [settings])
 
-  const [saved, setSaved] = useState(false)
   const [instances, setInstances] = useState<Instance[]>([])
   const [loadingInstances, setLoadingInstances] = useState(false)
   const [instanceAction, setInstanceAction] = useState<InstanceAction | null>(null)
   const [renaming, setRenaming] = useState<RenameState>(null)
   const [newInstanceName, setNewInstanceName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
-  const [qrModal, setQrModal] = useState<{ name: string; src: string } | null>(null)
+  const [qrModal, setQrModal] = useState<{ evoName: string; displayName: string; src: string } | null>(null)
   const [qrCountdown, setQrCountdown] = useState(60)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
-  // ── Load from Supabase ─────────────────────────────────────────────────────
+  const persistInstanceSettings = async (patch: {
+    evolution?: InstanceEvolutionSettings
+    ai_config?: AiConfig
+    shopify_config?: ShopifyConfig
+    evolutionInstanceName?: string | null
+    name?: string
+  }) => {
+    if (!activeInstanceId || !crmInstance) throw new Error('No active instance')
+    const nextSettings = {
+      ...crmInstance.settings,
+      ...(patch.evolution ? { evolution: patch.evolution } : {}),
+      ...(patch.ai_config ? { ai_config: patch.ai_config } : {}),
+      ...(patch.shopify_config ? { shopify_config: patch.shopify_config } : {}),
+    }
+    const row: Record<string, unknown> = { settings: nextSettings }
+    if (patch.evolutionInstanceName !== undefined) {
+      row.evolution_instance_name = patch.evolutionInstanceName
+    }
+    if (patch.name) row.name = patch.name
+    const { error: upErr } = await supabase.from('instances').update(row).eq('id', activeInstanceId)
+    if (upErr) throw upErr
+    await reloadInstancesForOrgs(orgIds)
+  }
+
+  // ── Load from active CRM instance ──────────────────────────────────────────
   useEffect(() => {
-    supabase.from('settings').select('value').eq('key', 'evolution').maybeSingle().then(({ data }) => {
-      if (data?.value) {
-        const d = data.value as {
-          apiUrl?: string
-          activeInstance?: string
-          instanceName?: string
-          apiKey?: string
-          webhookUrl?: string
-          displayNames?: Record<string, string>
-        }
-        setSettings({
-          apiUrl: d.apiUrl ?? '',
-          activeInstance: d.activeInstance ?? d.instanceName ?? '',
-          apiKey: d.apiKey ?? '',
-          webhookUrl: d.webhookUrl ?? '',
-          displayNames: d.displayNames ?? {},
-        })
-      }
+    if (!crmInstance) return
+    const evo = (crmInstance.settings.evolution ?? {}) as Partial<InstanceEvolutionSettings & { activeInstance?: string }>
+    setInstanceEvo({
+      activeInstance: crmInstance.evolutionInstanceName ?? evo.activeInstance ?? '',
+      displayNames: evo.displayNames ?? {},
     })
-    supabase.from('settings').select('value').eq('key', 'ai_config').maybeSingle().then(({ data }) => {
-      if (data?.value) {
-        const d = data.value as Record<string, string | boolean>
-        setAiConfig({
-          apiKey: (d.apiKey as string) ?? '',
-          model: (d.model as string) ?? 'gpt-4o-mini',
-          systemPrompt: (d.systemPrompt as string) ?? '',
-          enabled: (d.enabled as boolean) ?? false,
-        })
-      }
+    const ai = (crmInstance.settings.ai_config ?? {}) as Partial<AiConfig>
+    setAiConfig({
+      apiKey: ai.apiKey ?? '',
+      model: ai.model ?? 'gpt-4o-mini',
+      systemPrompt: ai.systemPrompt ?? '',
+      enabled: ai.enabled ?? false,
     })
-    supabase.from('settings').select('value').eq('key', 'shopify_config').maybeSingle().then(({ data }) => {
-      if (data?.value) {
-        const d = data.value as unknown as Record<string, string>
-        setShopifyConfig({
-          shopDomain: d.shopDomain ?? '',
-          clientId: d.clientId ?? '',
-          clientSecret: d.clientSecret ?? '',
-          apiVersion: d.apiVersion ?? '2026-07',
-        })
-      }
+    const shop = (crmInstance.settings.shopify_config ?? {}) as Partial<ShopifyConfig>
+    setShopifyConfig({
+      shopDomain: shop.shopDomain ?? '',
+      clientId: shop.clientId ?? '',
+      clientSecret: shop.clientSecret ?? '',
     })
-  }, [])
+  }, [crmInstance])
 
   // ── Evolution API helper ───────────────────────────────────────────────────
   const evo = useCallback(async (method: string, path: string, body?: unknown) => {
@@ -153,6 +190,19 @@ export default function Settings() {
   // ── Load instances ─────────────────────────────────────────────────────────
   const loadInstances = useCallback(async () => {
     if (!settingsRef.current.apiUrl || !settingsRef.current.apiKey) return
+    if (!activeOrganizationId) {
+      setInstances([])
+      return
+    }
+
+    const orgCrm = useTenantStore.getState()
+      .instances
+      .filter((i) => i.organizationId === activeOrganizationId && i.active && i.evolutionInstanceName)
+    if (orgCrm.length === 0) {
+      setInstances([])
+      return
+    }
+
     setLoadingInstances(true)
     setError(null)
     try {
@@ -164,6 +214,7 @@ export default function Settings() {
         if (item?.instance?.instanceName) {
           return {
             instanceName: item.instance.instanceName,
+            displayName: item.instance.instanceName,
             instanceId: item.instance.instanceId ?? item.instance.id,
             connectionStatus: item.instance.connectionStatus ?? item.instance.status,
             ownerJid: item.instance.ownerJid,
@@ -173,8 +224,10 @@ export default function Settings() {
           }
         }
         // flat shape: { name, connectionStatus, ... }
+        const instanceName = item.instanceName ?? item.name
         return {
-          instanceName: item.instanceName ?? item.name,
+          instanceName,
+          displayName: instanceName,
           instanceId: item.instanceId ?? item.id,
           connectionStatus: item.connectionStatus ?? item.status,
           ownerJid: item.ownerJid,
@@ -184,9 +237,20 @@ export default function Settings() {
         }
       }).filter((inst) => !!inst.instanceName)
 
-      // Check webhook status for each instance
+      const byName = new Map(list.map((inst) => [inst.instanceName, inst]))
+      const orgList = orgCrm.map((crm) => {
+        const evoName = crm.evolutionInstanceName as string
+        const found = byName.get(evoName)
+        return {
+          ...(found ?? { instanceName: evoName, connectionStatus: 'close' }),
+          displayName: crm.name,
+          crmInstanceId: crm.id,
+        }
+      })
+
+      // Check webhook status for each org-linked instance
       const withWebhook = await Promise.all(
-        list.map(async (inst) => {
+        orgList.map(async (inst) => {
           try {
             const wh = await evo('GET', `/webhook/find/${inst.instanceName}`)
             const url = wh?.url ?? wh?.webhook?.url ?? ''
@@ -204,45 +268,49 @@ export default function Settings() {
     } finally {
       setLoadingInstances(false)
     }
-  }, [evo])
+  }, [evo, activeOrganizationId])
 
   const apiUrl = settings.apiUrl
   const apiKey = settings.apiKey
   useEffect(() => {
-    if (apiUrl && apiKey) loadInstances()
-  }, [apiUrl, apiKey]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (apiUrl && apiKey && activeOrganizationId) loadInstances()
+    else setInstances([])
+  }, [apiUrl, apiKey, activeOrganizationId, orgLinkedEvoNames, loadInstances])
 
-  // ── Save ───────────────────────────────────────────────────────────────────
-  const handleSave = async () => {
-    await supabase.from('settings').upsert({ key: 'evolution', value: settings })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }
-
+  // ── Save instance display names ────────────────────────────────────────────
   const flash = (msg: string) => {
     setSuccessMsg(msg)
     setTimeout(() => setSuccessMsg(null), 3000)
   }
 
-  // ── Switch active instance ─────────────────────────────────────────────────
-  const switchInstance = async (name: string) => {
-    const updated = { ...settings, activeInstance: name }
-    setSettings(updated)
-    await supabase.from('settings').upsert({ key: 'evolution', value: updated })
-    flash(`Active instance switched to "${name}"`)
+  // ── Link Evolution WA instance to this CRM instance ────────────────────────
+  const switchInstance = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
+    const updated = { ...instanceEvo, activeInstance: evoName }
+    setInstanceEvo(updated)
+    try {
+      await persistInstanceSettings({
+        evolution: updated,
+        evolutionInstanceName: evoName,
+      })
+      flash(`Linked "${displayName}" to this workspace`)
+    } catch (e) {
+      setError((e as Error).message)
+    }
   }
 
   // ── Set webhook on instance ────────────────────────────────────────────────
-  const setWebhook = async (name: string) => {
+  const setWebhook = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
     const webhookUrl = settingsRef.current.webhookUrl.trim()
     if (!webhookUrl) {
-      setError('Enter your Edge Function webhook URL in the Webhook Configuration section first.')
+      setError('Webhook URL is not configured. Ask a platform admin to set it under Admin → Platform integration.')
       return
     }
-    setInstanceAction({ name, op: 'webhook' })
+    setInstanceAction({ name: evoName, op: 'webhook' })
     setError(null)
     try {
-      await evo('POST', `/webhook/set/${name}`, {
+      await evo('POST', `/webhook/set/${evoName}`, {
         webhook: {
           enabled: true,
           url: webhookUrl,
@@ -251,7 +319,7 @@ export default function Settings() {
           events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
         },
       })
-      flash(`Webhook configured for "${name}"`)
+      flash(`Webhook configured for "${displayName}"`)
       await loadInstances()
     } catch (e) {
       setError(`Webhook setup failed: ${(e as Error).message}`)
@@ -263,15 +331,35 @@ export default function Settings() {
   // ── Create instance ────────────────────────────────────────────────────────
   const createInstance = async () => {
     if (!newInstanceName.trim()) return
-    setInstanceAction({ name: newInstanceName, op: 'create' })
+    if (!activeOrganizationId) {
+      setError('Select an organization first')
+      return
+    }
+    const displayName = newInstanceName.trim()
+    const evoName = newEvolutionInstanceName()
+    setInstanceAction({ name: evoName, op: 'create' })
     setError(null)
     try {
       await evo('POST', '/instance/create', {
-        instanceName: newInstanceName.trim(),
+        instanceName: evoName,
         integration: 'WHATSAPP-BAILEYS',
       })
+      const { error: insErr } = await supabase.from('instances').insert({
+        organization_id: activeOrganizationId,
+        name: displayName,
+        evolution_instance_name: evoName,
+        settings: {
+          evolution: { activeInstance: evoName },
+          ai_config: aiConfig,
+          shopify_config: shopifyConfig,
+        },
+        active: true,
+      })
+      if (insErr) throw insErr
+      await reloadInstancesForOrgs(orgIds)
       setNewInstanceName('')
       setShowCreate(false)
+      flash(`Created WhatsApp instance "${displayName}" — switch to it in the header`)
       await loadInstances()
     } catch (e) {
       setError(`Create failed: ${(e as Error).message}`)
@@ -281,16 +369,26 @@ export default function Settings() {
   }
 
   // ── Delete instance ────────────────────────────────────────────────────────
-  const deleteInstance = async (name: string) => {
-    if (!confirm(`Delete instance "${name}"? This will disconnect WhatsApp.`)) return
-    setInstanceAction({ name, op: 'delete' })
+  const deleteInstance = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
+    if (!confirm(`Delete instance "${displayName}"? This will disconnect WhatsApp.`)) return
+    setInstanceAction({ name: evoName, op: 'delete' })
     setError(null)
     try {
-      await evo('DELETE', `/instance/delete/${name}`)
-      if (settings.activeInstance === name) {
-        const updated = { ...settings, activeInstance: '' }
-        setSettings(updated)
-        await supabase.from('settings').upsert({ key: 'evolution', value: updated })
+      await evo('DELETE', `/instance/delete/${evoName}`)
+      if (instanceEvo.activeInstance === evoName) {
+        const updated = { ...instanceEvo, activeInstance: '' }
+        setInstanceEvo(updated)
+        await persistInstanceSettings({ evolution: updated, evolutionInstanceName: null })
+      }
+      // Soft-deactivate matching CRM instances in this org
+      if (activeOrganizationId) {
+        await supabase
+          .from('instances')
+          .update({ active: false, evolution_instance_name: null })
+          .eq('organization_id', activeOrganizationId)
+          .eq('evolution_instance_name', evoName)
+        await reloadInstancesForOrgs(orgIds)
       }
       await loadInstances()
     } catch (e) {
@@ -300,21 +398,24 @@ export default function Settings() {
     }
   }
 
-  // ── Rename instance (display name only, stored in settings table) ─────────
-  const renameInstance = async (instanceName: string, displayName: string) => {
+  // ── Rename instance (display name only) ────────────────────────────────────
+  const renameInstance = async (evoInstanceName: string, displayName: string) => {
     const trimmed = displayName.trim()
-    if (!trimmed) { setRenaming(null); return }
-    setInstanceAction({ name: instanceName, op: 'rename' })
+    if (!trimmed || !activeOrganizationId) { setRenaming(null); return }
+    setInstanceAction({ name: evoInstanceName, op: 'rename' })
     try {
-      const updated = {
-        ...settingsRef.current,
-        displayNames: { ...(settingsRef.current.displayNames ?? {}), [instanceName]: trimmed },
-      }
-      await supabase.from('settings').upsert({ key: 'evolution', value: updated })
-      setSettings(updated)
+      const { error: upErr } = await supabase
+        .from('instances')
+        .update({ name: trimmed })
+        .eq('organization_id', activeOrganizationId)
+        .eq('evolution_instance_name', evoInstanceName)
+      if (upErr) throw upErr
+      await reloadInstancesForOrgs(orgIds)
+      await loadInstances()
       setRenaming(null)
+      flash(`Renamed to "${trimmed}"`)
     } catch (e) {
-      setError(`Rename failed: ${(e as Error).message}`)
+      setError((e as Error).message)
     } finally {
       setInstanceAction(null)
     }
@@ -335,17 +436,22 @@ export default function Settings() {
   }
 
   // ── Get QR ─────────────────────────────────────────────────────────────────
-  const getQR = async (name: string) => {
-    setInstanceAction({ name, op: 'qr' })
+  const getQR = async (evoName: string) => {
+    const displayName = instances.find((i) => i.instanceName === evoName)?.displayName ?? evoName
+    setInstanceAction({ name: evoName, op: 'qr' })
     setError(null)
     try {
-      const data = await evo('GET', `/instance/connect/${name}`)
+      const data = await evo('GET', `/instance/connect/${evoName}`)
       const base64 = data?.base64 ?? data?.qrcode?.base64 ?? null
       if (!base64) {
-        setError(`No QR returned — "${name}" may already be connected.`)
+        setError(`No QR returned — "${displayName}" may already be connected.`)
       } else {
         setQrCountdown(60)
-        setQrModal({ name, src: base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}` })
+        setQrModal({
+          evoName,
+          displayName,
+          src: base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`,
+        })
       }
     } catch (e) {
       setError(`QR failed: ${(e as Error).message}`)
@@ -363,14 +469,14 @@ export default function Settings() {
         if (n <= 1) {
           clearInterval(tick)
           // auto-refresh
-          getQR(qrModal.name)
+          getQR(qrModal.evoName)
           return 60
         }
         return n - 1
       })
     }, 1000)
     return () => clearInterval(tick)
-  }, [qrModal?.name, qrModal?.src]) // reset whenever a new QR image arrives
+  }, [qrModal?.evoName, qrModal?.src]) // reset whenever a new QR image arrives
 
   const _isBusy = (name: string, op?: string) =>
     instanceAction?.name === name && (!op || instanceAction.op === op)
@@ -378,70 +484,48 @@ export default function Settings() {
 
   const handleSaveShopify = async () => {
     setShopifySaving(true)
-    await supabase.from('settings').upsert({
-      key: 'shopify_config',
-      value: shopifyConfig as unknown as Record<string, unknown>,
-      updated_at: new Date().toISOString(),
-    })
-    setShopifySaving(false)
-    setShopifySaved(true)
-    setTimeout(() => setShopifySaved(false), 2000)
+    try {
+      await persistInstanceSettings({ shopify_config: shopifyConfig })
+      setShopifySaved(true)
+      setTimeout(() => setShopifySaved(false), 2000)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setShopifySaving(false)
+    }
   }
 
   const handleSaveAi = async () => {
     setAiSaving(true)
-    await supabase.from('settings').upsert({ key: 'ai_config', value: aiConfig as unknown as Record<string, unknown> })
-    setAiSaving(false)
-    setAiSaved(true)
-    setTimeout(() => setAiSaved(false), 2000)
+    try {
+      await persistInstanceSettings({ ai_config: aiConfig })
+      setAiSaved(true)
+      setTimeout(() => setAiSaved(false), 2000)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setAiSaving(false)
+    }
   }
 
   return (
     <div className="p-4 sm:p-6 max-w-full min-w-0">
       <h2 className="text-xl font-semibold text-gray-800 mb-6">Settings</h2>
+      <p className="text-sm text-gray-500 mb-4 max-w-2xl">
+        Configuring the active CRM instance
+        {crmInstance ? ` “${crmInstance.name}”` : ''}. Switch instances from the header.
+        Evolution API credentials are managed globally under{' '}
+        <Link to="/admin" className="text-green-600 hover:text-green-700 underline">Admin → Platform integration</Link>.
+      </p>
       <div className="max-w-2xl space-y-5">
 
-        {/* ── API Connection ── */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="font-semibold text-gray-700 mb-4">Evolution API Connection</h3>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">API URL</label>
-              <input
-                type="text"
-                value={settings.apiUrl}
-                onChange={(e) => setSettings((s) => ({ ...s, apiUrl: e.target.value }))}
-                placeholder="https://whatsappcrm.share.zrok.io"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">API Key</label>
-              <input
-                type="password"
-                value={settings.apiKey}
-                onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
-                placeholder="changeme123"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-              <p className="text-xs text-gray-400 mt-1">
-                <code className="bg-gray-100 px-1 rounded">AUTHENTICATION_API_KEY</code> in docker-compose
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={handleSave} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">
-                {saved ? '✓ Saved' : 'Save'}
-              </button>
-              <button
-                onClick={loadInstances}
-                disabled={loadingInstances}
-                className="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40"
-              >
-                {loadingInstances ? 'Loading…' : 'Refresh Instances'}
-              </button>
-            </div>
+        {(!platformEvo?.apiUrl || !platformEvo?.apiKey) && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+            Evolution API URL and key are not configured yet. A platform admin must set them under{' '}
+            <Link to="/admin" className="font-medium underline">Admin → Platform integration</Link>{' '}
+            before WhatsApp instances can be managed here.
           </div>
-        </div>
+        )}
 
         {/* ── Alerts ── */}
         {error && (
@@ -459,14 +543,24 @@ export default function Settings() {
 
         {/* ── Instances ── */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
             <h3 className="font-semibold text-gray-700">WhatsApp Instances</h3>
-            <button
-              onClick={() => setShowCreate((v) => !v)}
-              className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700"
-            >
-              + New Instance
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={loadInstances}
+                disabled={loadingInstances || !settings.apiUrl || !settings.apiKey}
+                className="border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40"
+              >
+                {loadingInstances ? 'Loading…' : 'Refresh instances'}
+              </button>
+              <button
+                onClick={() => setShowCreate((v) => !v)}
+                disabled={!settings.apiUrl || !settings.apiKey}
+                className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 disabled:opacity-40"
+              >
+                + New Instance
+              </button>
+            </div>
           </div>
 
           {showCreate && (
@@ -476,7 +570,7 @@ export default function Settings() {
                 value={newInstanceName}
                 onChange={(e) => setNewInstanceName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && createInstance()}
-                placeholder="Instance name (e.g. mystore)"
+                placeholder="Display name (e.g. Personal, Autolust)"
                 className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                 autoFocus
               />
@@ -502,7 +596,7 @@ export default function Settings() {
 
           {!loadingInstances && instances.length === 0 && (
             <div className="text-sm text-gray-400 py-6 text-center border-2 border-dashed border-gray-200 rounded-lg">
-              No instances found. Create one to get started.
+              No WhatsApp instances for this organization yet. Create one to get started.
             </div>
           )}
 
@@ -548,11 +642,11 @@ export default function Settings() {
                           </form>
                         ) : (
                           <button
-                            onClick={() => setRenaming({ name: inst.instanceName, value: settings.displayNames?.[inst.instanceName] ?? inst.instanceName })}
+                            onClick={() => setRenaming({ name: inst.instanceName, value: inst.displayName })}
                             className="font-medium text-gray-800 text-sm hover:text-green-700 hover:underline decoration-dotted"
                             title="Click to rename"
                           >
-                            {settings.displayNames?.[inst.instanceName] ?? inst.instanceName}
+                            {inst.displayName}
                           </button>
                         )}
                         {isActive && (
@@ -582,7 +676,7 @@ export default function Settings() {
                           onClick={() => switchInstance(inst.instanceName)}
                           className="text-xs border border-green-500 text-green-600 px-2.5 py-1 rounded-lg hover:bg-green-50"
                         >
-                          Use
+                          Link
                         </button>
                       )}
                       {!isConnected && (
@@ -642,45 +736,6 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* ── Webhook Configuration ── */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="font-semibold text-gray-700 mb-3">Webhook Configuration</h3>
-          <p className="text-sm text-gray-600 mb-3">
-            This URL receives WhatsApp events from Evolution API.
-            Deploy Supabase Edge Functions first, then paste the URL here.
-          </p>
-
-          <div className="mb-3">
-            <label className="block text-sm text-gray-600 mb-1">Edge Function URL</label>
-            <input
-              type="text"
-              value={settings.webhookUrl}
-              onChange={(e) => setSettings((s) => ({ ...s, webhookUrl: e.target.value }))}
-              placeholder="https://YOUR-PROJECT.supabase.co/functions/v1/evolution-webhook"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
-            />
-          </div>
-
-          <button onClick={handleSave} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 mb-4">
-            {saved ? '✓ Saved' : 'Save'}
-          </button>
-
-          <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-2">
-            <p className="font-medium text-gray-700">Deploy Supabase Edge Functions</p>
-            <pre className="text-xs text-gray-600 bg-white rounded border border-gray-200 p-3 overflow-x-auto">{`supabase secrets set EVOLUTION_API_KEY=... EVOLUTION_API_URL=... EVOLUTION_INSTANCE=...
-supabase functions deploy`}</pre>
-            <p className="text-xs text-gray-400">
-              After deploy, copy the <code className="bg-gray-100 px-1 rounded">evolution-webhook</code> URL and paste above.
-            </p>
-          </div>
-
-          <div className="mt-3 text-xs text-gray-400">
-            Events configured: <code className="bg-gray-100 px-1 rounded">MESSAGES_UPSERT</code>{' '}
-            <code className="bg-gray-100 px-1 rounded">MESSAGES_UPDATE</code>{' '}
-            <code className="bg-gray-100 px-1 rounded">CONNECTION_UPDATE</code>
-          </div>
-        </div>
-
         {/* ── Shopify ── */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <h3 className="font-semibold text-gray-700 mb-1">Shopify</h3>
@@ -692,7 +747,7 @@ supabase functions deploy`}</pre>
             <code className="bg-gray-100 px-1 rounded">write_customers</code>{' '}
             <code className="bg-gray-100 px-1 rounded">read_orders</code>{' '}
             <code className="bg-gray-100 px-1 rounded">write_orders</code>
-            . Install the app on your store first. After changing scopes, reinstall. API versions older than 2025-10 are upgraded automatically.
+            . Install the app on your store first. After changing scopes, reinstall.
           </p>
           <div className="space-y-4">
             <div>
@@ -722,16 +777,6 @@ supabase functions deploy`}</pre>
                 value={shopifyConfig.clientSecret}
                 onChange={(e) => setShopifyConfig((c) => ({ ...c, clientSecret: e.target.value }))}
                 placeholder="From Dev Dashboard → Settings"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">API version</label>
-              <input
-                type="text"
-                value={shopifyConfig.apiVersion}
-                onChange={(e) => setShopifyConfig((c) => ({ ...c, apiVersion: e.target.value }))}
-                placeholder="2026-07"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500"
               />
             </div>
@@ -809,7 +854,7 @@ supabase functions deploy`}</pre>
           <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-xs w-full mx-4 text-center" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-semibold text-gray-800 mb-1">Scan to connect</h3>
             <p className="text-sm text-gray-500 mb-4">
-              Instance: <span className="font-mono">{qrModal.name}</span>
+              Instance: <span className="font-medium">{qrModal.displayName}</span>
             </p>
             <div className="relative w-56 h-56 mx-auto">
               <img src={qrModal.src} alt="WhatsApp QR code" className="w-full h-full rounded-xl border border-gray-200" />
@@ -828,7 +873,7 @@ supabase functions deploy`}</pre>
               <p className="text-xs text-gray-400">QR refreshes automatically</p>
             </div>
             <button
-              onClick={() => getQR(qrModal.name)}
+              onClick={() => getQR(qrModal.evoName)}
               className="mt-2 text-sm text-green-600 hover:text-green-700 underline block mx-auto"
             >
               Refresh QR now

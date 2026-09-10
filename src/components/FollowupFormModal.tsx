@@ -4,6 +4,7 @@ import { useEnquiriesByCustomer } from '../hooks/useEnquiries'
 import { useUsers } from '../hooks/useUsers'
 import { useCreateFollowup } from '../hooks/useCreateFollowup'
 import { useAuthStore } from '../store/authStore'
+import { useTenantStore } from '../store/tenantStore'
 import { ensureEnquiryForCustomer, userLabel } from '../lib/db'
 import { toast } from './Toast'
 import type { EnrichedFollowup } from '../types'
@@ -61,6 +62,8 @@ export function FollowupFormModal({
   onUpdate,
 }: FollowupFormModalProps) {
   const user = useAuthStore((s) => s.user)
+  const organizationId = useTenantStore((s) => s.activeOrganizationId)
+  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const users = useUsers()
   const { customers } = useCustomers()
   const { create } = useCreateFollowup()
@@ -147,7 +150,12 @@ export function FollowupFormModal({
 
       let enquiryId = latestEnquiry?.id
       if (!enquiryId) {
+        if (!organizationId || !instanceId) {
+          toast('Select an organization and instance first', 'error')
+          return
+        }
         const { data: ensured, error: ensureError } = await ensureEnquiryForCustomer(
+          { organizationId, instanceId },
           customerId,
           assignedTo || user?.email || null
         )

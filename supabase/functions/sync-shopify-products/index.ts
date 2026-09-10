@@ -1,41 +1,98 @@
 import { makeServiceClient, cors, json, err } from '../_shared/supabase.ts'
 import {
   loadShopifyConfig,
-  shopifyFetch,
-  nextLinkFromHeader,
+  shopifyGraphql,
   normalizePriceKey,
+  fromShopifyGid,
   type CachedVariant,
   type ShopifyProductsCache,
 } from '../_shared/shopify.ts'
 
-interface ShopifyImage {
-  id: number
-  src: string
+interface GqlMetafield {
+  namespace: string
+  key: string
+  value: string
 }
 
-interface ShopifyVariant {
-  id: number
+interface GqlVariant {
+  id: string
   title: string
   sku: string | null
   price: string
-  image_id?: number | null
+  compareAtPrice: string | null
+  barcode: string | null
+  inventoryQuantity: number | null
+  selectedOptions: { name: string; value: string }[]
+  image: { url: string } | null
+  metafields: { nodes: GqlMetafield[] }
 }
 
-interface ShopifyProduct {
-  id: number
+interface GqlProduct {
+  id: string
   title: string
-  handle?: string
-  image?: ShopifyImage | null
-  images?: ShopifyImage[]
-  variants: ShopifyVariant[]
+  vendor: string | null
+  productType: string | null
+  handle: string | null
+  status: string
+  tags: string[]
+  descriptionHtml: string | null
+  featuredImage: { url: string } | null
+  metafields: { nodes: GqlMetafield[] }
+  variants: { nodes: GqlVariant[] }
 }
 
-function variantImageUrl(product: ShopifyProduct, variant: ShopifyVariant): string {
-  if (variant.image_id && product.images?.length) {
-    const match = product.images.find((img) => img.id === variant.image_id)
-    if (match?.src) return match.src
+const PRODUCTS_QUERY = `#graphql
+  query SyncProducts($cursor: String) {
+    products(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        title
+        vendor
+        productType
+        handle
+        status
+        tags
+        descriptionHtml
+        featuredImage { url }
+        metafields(first: 50) {
+          nodes { namespace key value }
+        }
+        variants(first: 100) {
+          nodes {
+            id
+            title
+            sku
+            price
+            compareAtPrice
+            barcode
+            inventoryQuantity
+            selectedOptions { name value }
+            image { url }
+            metafields(first: 50) {
+              nodes { namespace key value }
+            }
+          }
+        }
+      }
+    }
   }
-  return product.image?.src ?? product.images?.[0]?.src ?? ''
+`
+
+function metafieldsToRecord(
+  nodes: GqlMetafield[],
+  prefix: 'product' | 'variant',
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const mf of nodes) {
+    out[`${prefix}.${mf.namespace}.${mf.key}`] = mf.value
+  }
+  return out
+}
+
+function stripHtml(html: string | null): string {
+  if (!html) return ''
+  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 Deno.serve(async (req) => {
@@ -51,34 +108,69 @@ Deno.serve(async (req) => {
   if (authErr || !user) return err('Unauthorized', 401)
 
   try {
-    const cfg = await loadShopifyConfig()
+    let body: { instanceId?: string } = {}
+    try { body = await req.json() } catch { /* optional */ }
+    const cfg = await loadShopifyConfig(body.instanceId)
     const byPrice: Record<string, CachedVariant[]> = {}
     let rawCount = 0
-    let nextUrl: string | null =
-      `/products.json?limit=250&fields=id,title,handle,image,images,variants`
+    let cursor: string | null = null
+    let hasNextPage = true
 
-    while (nextUrl) {
-      const { data, link } = await shopifyFetch<{ products: ShopifyProduct[] }>(cfg, nextUrl)
-      for (const product of data.products ?? []) {
-        for (const variant of product.variants ?? []) {
+    while (hasNextPage) {
+      const data = await shopifyGraphql<{
+        products: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null }
+          nodes: GqlProduct[]
+        }
+      }>(cfg, PRODUCTS_QUERY, { cursor })
+
+      for (const product of data.products?.nodes ?? []) {
+        const productId = Number(fromShopifyGid(product.id))
+        const productMetafields = metafieldsToRecord(product.metafields?.nodes ?? [], 'product')
+
+        for (const variant of product.variants?.nodes ?? []) {
           rawCount++
+          const variantId = Number(fromShopifyGid(variant.id))
           const key = normalizePriceKey(variant.price)
+          const variantMetafields = metafieldsToRecord(variant.metafields?.nodes ?? [], 'variant')
+          const selected = variant.selectedOptions ?? []
+          const imageUrl = variant.image?.url || product.featuredImage?.url || undefined
+
           const entry: CachedVariant = {
-            variantId: variant.id,
-            productId: product.id,
+            variantId,
+            productId,
             title: product.title,
             variantTitle: variant.title,
             sku: variant.sku ?? '',
             price: normalizePriceKey(variant.price),
             currency: 'INR',
-            imageUrl: variantImageUrl(product, variant),
-            handle: product.handle ?? '',
+            imageUrl,
+            vendor: product.vendor ?? undefined,
+            productType: product.productType ?? undefined,
+            handle: product.handle ?? undefined,
+            status: product.status,
+            tags: product.tags?.length ? product.tags : undefined,
+            description: stripHtml(product.descriptionHtml) || undefined,
+            compareAtPrice: variant.compareAtPrice
+              ? normalizePriceKey(variant.compareAtPrice)
+              : undefined,
+            barcode: variant.barcode ?? undefined,
+            inventoryQuantity: variant.inventoryQuantity ?? undefined,
+            option1: selected[0]?.value,
+            option2: selected[1]?.value,
+            option3: selected[2]?.value,
+            metafields: Object.keys({ ...productMetafields, ...variantMetafields }).length
+              ? { ...productMetafields, ...variantMetafields }
+              : undefined,
           }
+
           if (!byPrice[key]) byPrice[key] = []
           byPrice[key].push(entry)
         }
       }
-      nextUrl = nextLinkFromHeader(link)
+
+      hasNextPage = data.products?.pageInfo?.hasNextPage ?? false
+      cursor = data.products?.pageInfo?.endCursor ?? null
     }
 
     const cache: ShopifyProductsCache = {

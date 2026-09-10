@@ -22,6 +22,7 @@ import {
   matchesUnread,
   type InboxFilters,
 } from '../lib/inboxFilters'
+import { formatConversationTime } from '../lib/datetime'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
 import { SlashCommandPicker } from '../components/SlashCommandPicker'
@@ -54,18 +55,6 @@ function statusColor(status: string): string {
     duplicate: 'bg-red-100 text-red-600',
   }
   return map[status] ?? 'bg-gray-100 text-gray-600'
-}
-
-function smartTimestamp(iso: string): string {
-  const date = new Date(iso)
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-  if (now.getTime() - date.getTime() < 7 * 24 * 60 * 60 * 1000) {
-    return date.toLocaleDateString([], { weekday: 'short' })
-  }
-  return date.toLocaleDateString([], { day: 'numeric', month: 'short' })
 }
 
 export default function Inbox() {
@@ -248,7 +237,7 @@ export default function Inbox() {
   }, [allMessages.length])
 
   const handleSend = async () => {
-    if (!text.trim() || !selected || sending) return
+    if (!text.trim() || !selected || sending || !conv) return
     if (parseSlashInput(text).open) return
     const msgText = text.trim()
     setSending(true)
@@ -256,6 +245,8 @@ export default function Inbox() {
 
     const tmpMsg: Message = {
       id: `tmp-${Date.now()}`,
+      organizationId: conv.organizationId,
+      instanceId: conv.instanceId,
       conversationId: selected,
       sender: 'agent',
       type: 'text',
@@ -277,7 +268,7 @@ export default function Inbox() {
   }
 
   const handleSendProduct = async (product: SendableProduct) => {
-    if (!selected || sending) return
+    if (!selected || sending || !conv) return
     const caption = formatProductCaption(product)
     const mediaUrl = product.imageUrl?.trim() || undefined
     setSending(true)
@@ -285,6 +276,8 @@ export default function Inbox() {
 
     const tmpMsg: Message = {
       id: `tmp-${Date.now()}`,
+      organizationId: conv.organizationId,
+      instanceId: conv.instanceId,
       conversationId: selected,
       sender: 'agent',
       type: mediaUrl ? 'image' : 'text',
@@ -501,7 +494,7 @@ export default function Inbox() {
                     {customerName(c)}
                   </span>
                   <span className="text-xs text-gray-400 flex-shrink-0">
-                    {c.updatedAt ? smartTimestamp(c.updatedAt) : ''}
+                    {formatConversationTime(c.updatedAt)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-1 gap-2">

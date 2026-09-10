@@ -2,9 +2,7 @@ import { useRef, useState } from 'react'
 import type { Message } from '../types'
 import { fetchMediaBase64 } from '../lib/functions'
 
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
+import { formatMessageTime } from '../lib/datetime'
 
 function realCaption(text: string | undefined): string | null {
   if (!text) return null
@@ -60,7 +58,7 @@ export function MessageBubble({
             isAgent ? 'text-green-200' : 'text-gray-400'
           }`}
         >
-          <span>{msg.timestamp ? formatTime(msg.timestamp) : ''}</span>
+          <span>{formatMessageTime(msg.timestamp)}</span>
           {isAgent && tick}
         </div>
       </div>

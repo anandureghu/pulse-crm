@@ -12,7 +12,7 @@ export interface EvolutionWebhookMessage {
       documentMessage?: { url: string; title?: string }
     }
     messageType: string
-    messageTimestamp: number
+    messageTimestamp?: number | string | { low: number; high?: number }
     status?: string
   }
 }

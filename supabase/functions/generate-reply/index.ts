@@ -24,10 +24,29 @@ Deno.serve(async (req) => {
 
   const supabase = makeServiceClient()
 
-  // Load AI config
-  const { data: aiRow } = await supabase.from('settings').select('value').eq('key', 'ai_config').single()
-  const aiCfg = aiRow?.value as { apiKey?: string; model?: string; systemPrompt?: string } | null
-  if (!aiCfg?.apiKey) return fail('OpenAI API key not configured in Settings', 400)
+  // Resolve tenant from conversation, then load AI config from that instance
+  const { data: conv } = await supabase
+    .from('conversations')
+    .select('instance_id')
+    .eq('id', conversationId)
+    .maybeSingle()
+  if (!conv?.instance_id) return fail('Conversation not found', 404)
+
+  const { data: inst } = await supabase
+    .from('instances')
+    .select('settings')
+    .eq('id', conv.instance_id)
+    .maybeSingle()
+  let resolvedAi = ((inst?.settings as Record<string, unknown> | null)?.ai_config ?? null) as {
+    apiKey?: string
+    model?: string
+    systemPrompt?: string
+  } | null
+  if (!resolvedAi?.apiKey) {
+    const { data: aiRow } = await supabase.from('settings').select('value').eq('key', 'ai_config').maybeSingle()
+    resolvedAi = aiRow?.value as { apiKey?: string; model?: string; systemPrompt?: string } | null
+  }
+  if (!resolvedAi?.apiKey) return fail('OpenAI API key not configured in Settings', 400)
 
   // Load recent messages (last 30)
   const { data: rows } = await supabase
@@ -41,10 +60,10 @@ Deno.serve(async (req) => {
   if (messages.length === 0) return fail('No messages in conversation', 400)
 
   // Build OpenAI messages array
-  const model = aiCfg.model ?? 'gpt-4o-mini'
+  const model = resolvedAi.model ?? 'gpt-4o-mini'
 
-  const productContext = aiCfg.systemPrompt?.trim()
-    ? `\n\n## Product & Company Information\n${aiCfg.systemPrompt}`
+  const productContext = resolvedAi.systemPrompt?.trim()
+    ? `\n\n## Product & Company Information\n${resolvedAi.systemPrompt}`
     : ''
 
   const systemPrompt = `You are a real human sales person at Autolust, chatting on WhatsApp. You are NOT an AI assistant. You are a young, experienced team member who genuinely cares about helping customers find the right product.${productContext}
@@ -127,7 +146,7 @@ Return ONLY the reply text. No quotes, no labels, no explanation. Just the messa
   const oaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${aiCfg.apiKey}`,
+      Authorization: `Bearer ${resolvedAi.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({

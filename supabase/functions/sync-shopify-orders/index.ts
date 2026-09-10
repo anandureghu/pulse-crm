@@ -67,7 +67,15 @@ Deno.serve(async (req) => {
   if (authErr || !user) return err('Unauthorized', 401)
 
   try {
-    const cfg = await loadShopifyConfig()
+    let body: { instanceId?: string; organizationId?: string } = {}
+    try { body = await req.json() } catch { /* empty body ok for legacy */ }
+    const instanceId = body.instanceId
+    const organizationId = body.organizationId
+    if (!instanceId || !organizationId) {
+      return err('instanceId and organizationId required', 400)
+    }
+
+    const cfg = await loadShopifyConfig(instanceId)
     let nextUrl: string | null =
       '/orders.json?status=any&limit=250&fields=id,name,email,total_price,tags,created_at,cancelled_at,financial_status,customer,shipping_address,billing_address'
     let synced = 0
@@ -85,6 +93,7 @@ Deno.serve(async (req) => {
           await supabase
             .from('shopify_orders')
             .delete()
+            .eq('instance_id', instanceId)
             .eq('shopify_order_id', shopifyOrderId)
           removed++
           continue
@@ -103,6 +112,7 @@ Deno.serve(async (req) => {
         const { data: existing } = await supabase
           .from('shopify_orders')
           .select('id')
+          .eq('instance_id', instanceId)
           .eq('shopify_order_id', shopifyOrderId)
           .maybeSingle()
 
@@ -119,6 +129,8 @@ Deno.serve(async (req) => {
           error: null,
           prompt: null,
           parsed_dto: null,
+          organization_id: organizationId,
+          instance_id: instanceId,
         }
 
         if (existing) {
@@ -135,10 +147,11 @@ Deno.serve(async (req) => {
       nextUrl = nextLinkFromHeader(link)
     }
 
-    // Drop local rows that no longer exist in Shopify (or were never synced)
+    // Drop local rows for this instance that no longer exist in Shopify
     const { data: localRows } = await supabase
       .from('shopify_orders')
       .select('id, shopify_order_id')
+      .eq('instance_id', instanceId)
 
     for (const row of localRows ?? []) {
       if (!row.shopify_order_id || !seenIds.has(row.shopify_order_id)) {
