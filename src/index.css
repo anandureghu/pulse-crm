@@ -93,3 +93,7 @@ h4,
 .duration-400 {
   transition-duration: 400ms;
 }
+
+.safe-area-pb {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}

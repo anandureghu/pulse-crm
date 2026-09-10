@@ -17,6 +17,7 @@ export interface CachedVariant {
   sku: string
   price: string
   currency: string
+  imageUrl?: string
   vendor?: string
   productType?: string
   handle?: string
@@ -37,6 +38,7 @@ export interface ShopifyProductsCache {
   byPrice: Record<string, CachedVariant[]>
   syncedAt: string | null
   rawCount: number
+  shopDomain?: string
 }
 
 export interface OrderCustomerDto {

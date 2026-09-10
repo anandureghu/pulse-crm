@@ -143,7 +143,7 @@ supabase functions serve
 
 ## Sales Pipeline Stages
 
-New Lead → Assigned → Contact Attempted → Interested → Follow-up Required →
+New Lead → Assigned → Contact Attempted → Interested → Confused → Follow-up Required →
 Negotiation → Ready to Buy → Payment Pending → Sale Completed → After Sales → Repeat Customer
 
 Lost branch: Not Interested / Lost / Spam / Duplicate
@@ -151,4 +151,5 @@ Lost branch: Not Interested / Lost / Spam / Duplicate
 ## Database Tables
 
 `users` · `customers` · `enquiries` · `conversations` · `messages` ·
-`notes` · `activities` · `followups` · `tags` · `settings` · `shopify_orders`
+`notes` · `activities` · `followups` · `tags` · `settings` · `shopify_orders` ·
+`inbox_snippets`

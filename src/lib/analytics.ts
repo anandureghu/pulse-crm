@@ -33,6 +33,7 @@ export const ACTIVE_FUNNEL: { key: EnquiryStatus; label: string; color: string; 
   { key: 'assigned', label: 'Assigned', color: '#60a5fa', gradient: ['#93c5fd', '#3b82f6'] },
   { key: 'contact_attempted', label: 'Contacted', color: '#38bdf8', gradient: ['#7dd3fc', '#0ea5e9'] },
   { key: 'interested', label: 'Interested', color: '#fbbf24', gradient: ['#fcd34d', '#f59e0b'] },
+  { key: 'confused', label: 'Confused', color: '#818cf8', gradient: ['#a5b4fc', '#6366f1'] },
   { key: 'follow_up_required', label: 'Follow-up req.', color: '#fb923c', gradient: ['#fdba74', '#f97316'] },
   { key: 'negotiation', label: 'Negotiation', color: '#a78bfa', gradient: ['#c4b5fd', '#8b5cf6'] },
   { key: 'ready_to_buy', label: 'Ready to Buy', color: '#2dd4bf', gradient: ['#5eead4', '#14b8a6'] },

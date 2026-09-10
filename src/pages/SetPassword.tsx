@@ -19,7 +19,7 @@ export default function SetPassword() {
       setReady(true)
       return
     }
-    const t = window.setTimeout(() => setReady(true), 1500)
+    const t = window.setTimeout(() => setReady(true), 4000)
     return () => window.clearTimeout(t)
   }, [user, authLoading, member])
 
@@ -48,7 +48,7 @@ export default function SetPassword() {
 
   if (authLoading || member === null || !ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 text-sm text-gray-400">
+      <div className="min-h-dvh flex items-center justify-center bg-gray-50 text-sm text-gray-400 p-4 safe-area-pb">
         Checking invite link…
       </div>
     )
@@ -56,8 +56,8 @@ export default function SetPassword() {
 
   if (!user || !member) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <div className="bg-white rounded-2xl shadow-md p-8 w-full max-w-sm text-center">
+      <div className="min-h-dvh overflow-y-auto flex items-center justify-center bg-gray-50 p-4 safe-area-pb">
+        <div className="bg-white rounded-2xl shadow-md p-6 sm:p-8 w-full max-w-sm text-center my-auto">
           <h1 className="text-lg font-semibold text-gray-800 mb-2">
             {!user ? 'Link expired or invalid' : 'Invite required'}
           </h1>
@@ -75,8 +75,8 @@ export default function SetPassword() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-      <div className="bg-white rounded-2xl shadow-md p-8 w-full max-w-sm">
+    <div className="min-h-dvh overflow-y-auto flex items-center justify-center bg-gray-50 p-4 safe-area-pb">
+      <div className="bg-white rounded-2xl shadow-md p-6 sm:p-8 w-full max-w-sm my-auto">
         <div className="text-center mb-6">
           <img src="/logo.svg" alt="pulsrm" className="h-10 mx-auto mb-3" />
           <h1 className="text-lg font-semibold text-gray-800">Set your password</h1>

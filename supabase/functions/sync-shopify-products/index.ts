@@ -23,6 +23,7 @@ interface GqlVariant {
   barcode: string | null
   inventoryQuantity: number | null
   selectedOptions: { name: string; value: string }[]
+  image: { url: string } | null
   metafields: { nodes: GqlMetafield[] }
 }
 
@@ -35,6 +36,7 @@ interface GqlProduct {
   status: string
   tags: string[]
   descriptionHtml: string | null
+  featuredImage: { url: string } | null
   metafields: { nodes: GqlMetafield[] }
   variants: { nodes: GqlVariant[] }
 }
@@ -52,6 +54,7 @@ const PRODUCTS_QUERY = `#graphql
         status
         tags
         descriptionHtml
+        featuredImage { url }
         metafields(first: 50) {
           nodes { namespace key value }
         }
@@ -65,6 +68,7 @@ const PRODUCTS_QUERY = `#graphql
             barcode
             inventoryQuantity
             selectedOptions { name value }
+            image { url }
             metafields(first: 50) {
               nodes { namespace key value }
             }
@@ -130,6 +134,7 @@ Deno.serve(async (req) => {
           const key = normalizePriceKey(variant.price)
           const variantMetafields = metafieldsToRecord(variant.metafields?.nodes ?? [], 'variant')
           const selected = variant.selectedOptions ?? []
+          const imageUrl = variant.image?.url || product.featuredImage?.url || undefined
 
           const entry: CachedVariant = {
             variantId,
@@ -139,6 +144,7 @@ Deno.serve(async (req) => {
             sku: variant.sku ?? '',
             price: normalizePriceKey(variant.price),
             currency: 'INR',
+            imageUrl,
             vendor: product.vendor ?? undefined,
             productType: product.productType ?? undefined,
             handle: product.handle ?? undefined,
@@ -171,6 +177,7 @@ Deno.serve(async (req) => {
       byPrice,
       syncedAt: new Date().toISOString(),
       rawCount,
+      shopDomain: cfg.shopDomain,
     }
 
     const { error: upsertErr } = await supabase.from('settings').upsert({

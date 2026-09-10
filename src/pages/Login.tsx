@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, Navigate, Link } from 'react-router-dom'
+import { Navigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
 
@@ -11,8 +11,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [mode, setMode] = useState<'signin' | 'forgot'>('signin')
-  const navigate = useNavigate()
+  const [awaitingMember, setAwaitingMember] = useState(false)
   const { user, loading: authLoading, member } = useAuthStore()
+
+  useEffect(() => {
+    if (awaitingMember && member) setAwaitingMember(false)
+    if (awaitingMember && !user && member === false) setAwaitingMember(false)
+  }, [awaitingMember, member, user])
 
   useEffect(() => {
     if (sessionStorage.getItem('pulsrm_not_invited') === '1') {
@@ -22,6 +27,14 @@ export default function Login() {
   }, [])
 
   if (!authLoading && user && member) return <Navigate to="/" replace />
+
+  if (awaitingMember || (!authLoading && user && member === null)) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-4 safe-area-pb">
+        <p className="text-sm text-gray-400">Signing you in…</p>
+      </div>
+    )
+  }
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -46,7 +59,7 @@ export default function Login() {
         return
       }
 
-      navigate('/', { replace: true })
+      setAwaitingMember(true)
     } catch {
       setError('Invalid email or password')
     } finally {
@@ -91,8 +104,8 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white rounded-2xl shadow-md p-8 w-full max-w-sm">
+    <div className="min-h-dvh overflow-y-auto flex items-center justify-center bg-gray-50 p-4 safe-area-pb">
+      <div className="bg-white rounded-2xl shadow-md p-6 sm:p-8 w-full max-w-sm my-auto">
         <div className="text-center mb-6">
           <div className="flex items-center justify-center mb-3">
             <img src="/logo.svg" alt="pulsrm" className="h-10" />

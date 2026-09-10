@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useConversations, useMessages } from '../hooks/useConversations'
@@ -9,12 +9,27 @@ import { useAuthStore } from '../store/authStore'
 import { sendMessageFn, assignEnquiryFn } from '../lib/functions'
 import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
+import {
+  collectAssigneeOptions,
+  collectTagOptions,
+  countActiveInboxFilters,
+  DEFAULT_INBOX_FILTERS,
+  inboxFilterSummaries,
+  matchesActivity,
+  matchesAssignee,
+  matchesStatus,
+  matchesTag,
+  matchesUnread,
+  type InboxFilters,
+} from '../lib/inboxFilters'
 import { formatConversationTime } from '../lib/datetime'
 import { toast } from '../components/Toast'
 import { MessageBubble } from '../components/MessageBubble'
-import type { Conversation, EnquiryStatus, Message } from '../types'
-
-type AssigneeFilter = 'all' | 'me' | 'other'
+import { SlashCommandPicker } from '../components/SlashCommandPicker'
+import { parseSlashInput } from '../lib/slashCommands'
+import { formatProductCaption } from '../lib/shopifyProducts'
+import { InboxFiltersDialog } from '../components/InboxFiltersDialog'
+import type { Conversation, EnquiryStatus, Message, SendableProduct } from '../types'
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, ' ')
@@ -26,6 +41,7 @@ function statusColor(status: string): string {
     assigned: 'bg-blue-100 text-blue-700',
     contact_attempted: 'bg-sky-100 text-sky-700',
     interested: 'bg-yellow-100 text-yellow-700',
+    confused: 'bg-indigo-100 text-indigo-700',
     follow_up_required: 'bg-orange-100 text-orange-700',
     negotiation: 'bg-purple-100 text-purple-700',
     ready_to_buy: 'bg-teal-100 text-teal-700',
@@ -53,7 +69,8 @@ export default function Inbox() {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [search, setSearch] = useState('')
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>('all')
+  const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [optimistic, setOptimistic] = useState<Message[]>([])
   const [clearConfirm, setClearConfirm] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -63,6 +80,7 @@ export default function Inbox() {
   const [assigning, setAssigning] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const slashKeyRef = useRef<((e: React.KeyboardEvent) => boolean) | null>(null)
 
   const messages = useMessages(selected)
   const conv = conversations.find((c) => c.id === selected)
@@ -133,39 +151,66 @@ export default function Inbox() {
     return map
   })()
 
+  const customerById = useMemo(() => {
+    const map = new Map(customers.map((c) => [c.id, c]))
+    return map
+  }, [customers])
+
   const customerName = (c: Conversation) =>
-    customers.find((cu) => cu.id === c.customerId)?.name ?? c.customerId
+    customerById.get(c.customerId)?.name ?? c.customerId
 
   const customerAssignee = (c: Conversation) =>
-    customers.find((cu) => cu.id === c.customerId)?.assignedTo?.trim() || null
+    customerById.get(c.customerId)?.assignedTo?.trim() || null
 
   const customerStatus = (c: Conversation) =>
     statusByCustomer.get(c.customerId) ?? null
 
-  const matchesAssigneeFilter = (c: Conversation, filter: AssigneeFilter) => {
-    if (filter === 'all') return true
-    const assignee = customerAssignee(c)
-    if (filter === 'me') return Boolean(meLabel) && assignee === meLabel
-    // other: not assigned to me (unassigned or someone else)
-    return !meLabel || assignee !== meLabel
-  }
+  const teamLabels = useMemo(
+    () => users.map((u) => userLabel(u)).filter(Boolean),
+    [users],
+  )
 
-  const filterCounts = {
-    all: conversations.length,
-    me: conversations.filter((c) => matchesAssigneeFilter(c, 'me')).length,
-    other: conversations.filter((c) => matchesAssigneeFilter(c, 'other')).length,
+  const assigneeOptions = useMemo(
+    () => collectAssigneeOptions(customers, teamLabels),
+    [customers, teamLabels],
+  )
+
+  const tagOptions = useMemo(() => collectTagOptions(customers), [customers])
+
+  const activeFilterCount = countActiveInboxFilters(filters)
+  const filterChips = inboxFilterSummaries(filters, meLabel)
+
+  const matchesFilters = (c: Conversation) => {
+    const customer = customerById.get(c.customerId)
+    if (!matchesUnread(c, filters.unread)) return false
+    if (!matchesAssignee(customerAssignee(c), filters.assignee, meLabel)) return false
+    if (!matchesStatus(customerStatus(c), filters.status)) return false
+    if (!matchesActivity(c.updatedAt, filters.activity)) return false
+    if (!matchesTag(customer, filters.tag)) return false
+    return true
   }
 
   const filtered = conversations.filter((c) => {
-    if (!matchesAssigneeFilter(c, assigneeFilter)) return false
+    if (!matchesFilters(c)) return false
     if (!search) return true
     const q = search.toLowerCase()
     const name = customerName(c).toLowerCase()
-    const phone = customers.find((cu) => cu.id === c.customerId)?.phone ?? ''
+    const phone = customerById.get(c.customerId)?.phone ?? ''
     const assignee = customerAssignee(c)?.toLowerCase() ?? ''
     const status = customerStatus(c)?.replace(/_/g, ' ') ?? ''
-    return name.includes(q) || phone.includes(q) || assignee.includes(q) || status.includes(q)
+    const tags = (customerById.get(c.customerId)?.tags ?? []).join(' ').toLowerCase()
+    return (
+      name.includes(q)
+      || phone.includes(q)
+      || assignee.includes(q)
+      || status.includes(q)
+      || tags.includes(q)
+    )
   })
+
+  const clearFilterKey = (key: keyof InboxFilters) => {
+    setFilters((prev) => ({ ...prev, [key]: DEFAULT_INBOX_FILTERS[key] }))
+  }
 
   const selectedVisible = !selected || filtered.some((c) => c.id === selected)
 
@@ -193,6 +238,7 @@ export default function Inbox() {
 
   const handleSend = async () => {
     if (!text.trim() || !selected || sending || !conv) return
+    if (parseSlashInput(text).open) return
     const msgText = text.trim()
     setSending(true)
     setText('')
@@ -221,7 +267,43 @@ export default function Inbox() {
     }
   }
 
+  const handleSendProduct = async (product: SendableProduct) => {
+    if (!selected || sending || !conv) return
+    const caption = formatProductCaption(product)
+    const mediaUrl = product.imageUrl?.trim() || undefined
+    setSending(true)
+    setText('')
+
+    const tmpMsg: Message = {
+      id: `tmp-${Date.now()}`,
+      organizationId: conv.organizationId,
+      instanceId: conv.instanceId,
+      conversationId: selected,
+      sender: 'agent',
+      type: mediaUrl ? 'image' : 'text',
+      text: caption,
+      media: mediaUrl,
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+    }
+    setOptimistic((prev) => [...prev, tmpMsg])
+
+    try {
+      await sendMessageFn({
+        conversationId: selected,
+        text: caption,
+        ...(mediaUrl ? { mediaUrl, mediaType: 'image' } : {}),
+      })
+    } catch {
+      setOptimistic((prev) => prev.filter((m) => m.id !== tmpMsg.id))
+      toast('Failed to send product', 'error')
+    } finally {
+      setSending(false)
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (slashKeyRef.current?.(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -333,17 +415,29 @@ export default function Inbox() {
     <div className="flex h-full min-h-0 min-w-0">
       <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0 min-h-0`}>
         <div className="p-4 border-b border-gray-200 space-y-2">
-          <h2 className="font-semibold text-gray-800">Inbox</h2>
-          <select
-            value={assigneeFilter}
-            onChange={(e) => setAssigneeFilter(e.target.value as AssigneeFilter)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500 bg-gray-50"
-            aria-label="Filter by assignee"
-          >
-            <option value="all">All ({filterCounts.all})</option>
-            <option value="me">Assigned to me ({filterCounts.me})</option>
-            <option value="other">Other ({filterCounts.other})</option>
-          </select>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-semibold text-gray-800">Inbox</h2>
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(true)}
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors ${
+                activeFilterCount > 0
+                  ? 'border-green-300 bg-green-50 text-green-700 hover:bg-green-100'
+                  : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
+              }`}
+              aria-label="Open conversation filters"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <path d="M2 3.5h12M4 8h8M6 12.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="bg-green-600 text-white text-[10px] min-w-[16px] h-4 px-1 rounded-full inline-flex items-center justify-center">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          </div>
           <input
             type="text"
             value={search}
@@ -351,12 +445,37 @@ export default function Inbox() {
             placeholder="Search conversations…"
             className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-gray-50"
           />
+          {filterChips.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-0.5">
+              {filterChips.map((chip) => (
+                <button
+                  key={`${chip.key}-${chip.label}`}
+                  type="button"
+                  onClick={() => clearFilterKey(chip.key)}
+                  className="inline-flex items-center gap-1 max-w-full bg-green-50 text-green-800 text-[11px] px-2 py-0.5 rounded-full hover:bg-green-100"
+                  title={`Remove ${chip.label} filter`}
+                >
+                  <span className="truncate">{chip.label}</span>
+                  <span aria-hidden className="text-green-600">×</span>
+                </button>
+              ))}
+              {activeFilterCount > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setFilters({ ...DEFAULT_INBOX_FILTERS })}
+                  className="text-[11px] text-gray-500 hover:text-gray-700 px-1"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex-1 overflow-auto">
           {loading && <p className="text-sm text-gray-400 p-4">Loading…</p>}
           {!loading && filtered.length === 0 && (
             <p className="text-sm text-gray-400 p-4">
-              {search || assigneeFilter !== 'all' ? 'No matches.' : 'No conversations yet.'}
+              {search || activeFilterCount > 0 ? 'No matches.' : 'No conversations yet.'}
             </p>
           )}
           {filtered.map((c) => {
@@ -599,35 +718,43 @@ export default function Inbox() {
               </div>
             )}
 
-            <div className="bg-white border-t border-gray-200 p-3 flex gap-2 items-end">
-              <button
-                onClick={handleAiSuggest}
-                disabled={aiLoading}
-                title="Get AI suggested reply"
-                className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
-              >
-                {aiLoading ? (
-                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                ) : '✨'}
-              </button>
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type a message… (Enter to send)"
-                rows={1}
-                className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+            <div className="relative bg-white border-t border-gray-200 p-3">
+              <SlashCommandPicker
+                text={text}
+                onChange={setText}
+                onSendProduct={handleSendProduct}
+                onKeyIntercept={(handler) => { slashKeyRef.current = handler }}
               />
-              <button
-                onClick={handleSend}
-                disabled={!text.trim() || sending}
-                className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
-              >
-                ➤
-              </button>
+              <div className="flex gap-2 items-end">
+                <button
+                  onClick={handleAiSuggest}
+                  disabled={aiLoading}
+                  title="Get AI suggested reply"
+                  className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
+                >
+                  {aiLoading ? (
+                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                  ) : '✨'}
+                </button>
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a message…  /products  /reply"
+                  rows={1}
+                  className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={!text.trim() || sending || parseSlashInput(text).open}
+                  className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
+                >
+                  ➤
+                </button>
+              </div>
             </div>
           </>
         ) : (
@@ -644,6 +771,19 @@ export default function Inbox() {
           </div>
         )}
       </div>
+
+      <InboxFiltersDialog
+        open={filtersOpen}
+        value={filters}
+        meLabel={meLabel}
+        assigneeOptions={assigneeOptions}
+        tagOptions={tagOptions}
+        onClose={() => setFiltersOpen(false)}
+        onApply={(next) => {
+          setFilters(next)
+          setFiltersOpen(false)
+        }}
+      />
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { InboxShortcutsPanel } from '../components/InboxShortcutsPanel'
 import { useTenantStore, selectActiveInstance, selectOrgInstances } from '../store/tenantStore'
 import { reloadInstancesForOrgs } from '../lib/tenant'
 import { usePlatformEvolutionSettings } from '../hooks/usePlatformEvolutionSettings'
@@ -788,6 +789,8 @@ export default function Settings() {
             </button>
           </div>
         </div>
+
+        <InboxShortcutsPanel />
 
         {/* ── AI Configuration ── */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">

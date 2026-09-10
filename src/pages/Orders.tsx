@@ -14,6 +14,7 @@ interface CachedVariant {
   sku: string
   price: string
   currency: string
+  imageUrl?: string
   vendor?: string
   productType?: string
   handle?: string
