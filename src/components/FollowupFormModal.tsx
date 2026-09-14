@@ -6,6 +6,7 @@ import { useCreateFollowup } from '../hooks/useCreateFollowup'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
 import { ensureEnquiryForCustomer, userLabel } from '../lib/db'
+import { matchesPhoneSearch, formatPhoneDisplay } from '../lib/phone'
 import { toast } from './Toast'
 import type { EnrichedFollowup } from '../types'
 
@@ -94,7 +95,7 @@ export function FollowupFormModal({
       .filter(
         (c) =>
           c.name.toLowerCase().includes(q) ||
-          c.phone.toLowerCase().includes(q)
+          matchesPhoneSearch(c.phone, customerSearch)
       )
       .slice(0, 8)
   }, [customers, customerSearch])
@@ -198,7 +199,7 @@ export function FollowupFormModal({
                 <div className="flex items-center justify-between gap-2 border border-gray-200 rounded-lg px-3 py-2">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-800 truncate">{selectedCustomer.name}</p>
-                    <p className="text-xs text-gray-400">{selectedCustomer.phone}</p>
+                    <p className="text-xs text-gray-400">{formatPhoneDisplay(selectedCustomer.phone)}</p>
                   </div>
                   <button
                     type="button"
@@ -229,7 +230,7 @@ export function FollowupFormModal({
                           className="w-full text-left px-3 py-2 hover:bg-gray-50"
                         >
                           <p className="text-sm text-gray-800 truncate">{c.name}</p>
-                          <p className="text-xs text-gray-400">{c.phone}</p>
+                          <p className="text-xs text-gray-400">{formatPhoneDisplay(c.phone)}</p>
                         </button>
                       ))
                     )}

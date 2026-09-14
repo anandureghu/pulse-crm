@@ -7,7 +7,7 @@ import { userLabel } from '../lib/db'
 import { toast } from '../components/Toast'
 import { FollowupFormModal } from '../components/FollowupFormModal'
 import { CustomerNotesModal } from '../components/CustomerNotesModal'
-import { telHref } from '../lib/phone'
+import { matchesPhoneSearch, telHref } from '../lib/phone'
 import type { EnrichedFollowup } from '../types'
 
 type MainTab = 'pending' | 'completed'
@@ -96,7 +96,7 @@ export default function Followups() {
         f.customerName.toLowerCase().includes(q) ||
         f.note.toLowerCase().includes(q) ||
         f.assignedTo.toLowerCase().includes(q) ||
-        (f.customerPhone ?? '').includes(q)
+        matchesPhoneSearch(f.customerPhone, search)
       )
     })
 
@@ -322,7 +322,7 @@ export default function Followups() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search customer, note, assignee…"
+          placeholder="Search customer, phone, note, assignee…"
           className="flex-1 min-w-0 w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
         />
 

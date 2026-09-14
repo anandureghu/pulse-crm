@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useTenantStore } from '../store/tenantStore'
 import { toast } from '../components/Toast'
-import { formatPhoneDisplay } from '../lib/phone'
+import { formatPhoneDisplay, matchesPhoneSearch } from '../lib/phone'
 import { printPackingSlip, packingSlipHtml, type PackingSlipData } from '../lib/packingSlip'
 import { downloadCsv } from '../lib/analytics'
 
@@ -266,6 +266,7 @@ export default function Orders() {
   const [recent, setRecent] = useState<ShopifyOrderRow[]>([])
   const [tagsInput, setTagsInput] = useState(() => loadOrderDraft()?.tagsInput ?? '')
   const [productSearch, setProductSearch] = useState('')
+  const [orderSearch, setOrderSearch] = useState('')
   const [formKey, setFormKey] = useState(0)
   const [syncingOrders, setSyncingOrders] = useState(false)
   const [syncingCustomers, setSyncingCustomers] = useState(false)
@@ -351,6 +352,18 @@ export default function Orders() {
       || p.price.includes(q),
     )
   }, [allProducts, productSearch])
+
+  const filteredOrders = useMemo(() => {
+    const q = orderSearch.trim().toLowerCase()
+    if (!q) return recent
+    return recent.filter((row) =>
+      (row.shopify_order_name ?? '').toLowerCase().includes(q)
+      || (row.customer_name ?? '').toLowerCase().includes(q)
+      || (row.email ?? '').toLowerCase().includes(q)
+      || (row.tags ?? []).some((t) => t.toLowerCase().includes(q))
+      || matchesPhoneSearch(row.phone, orderSearch),
+    )
+  }, [recent, orderSearch])
 
   const lineItems = dto?.lineItems?.length
     ? dto.lineItems
@@ -1055,6 +1068,13 @@ export default function Orders() {
           <p className="text-xs text-gray-400 mb-3">
             Showing orders synced from Shopify only. Create an order or click Sync orders to refresh.
           </p>
+          <input
+            type="search"
+            value={orderSearch}
+            onChange={(e) => setOrderSearch(e.target.value)}
+            placeholder="Search order, customer, phone, email…"
+            className="w-full mb-3 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-gray-50"
+          />
 
           {editing && (
             <div className="mb-4 rounded-lg border border-green-200 bg-green-50/50 p-4 space-y-3">
@@ -1090,9 +1110,11 @@ export default function Orders() {
             </div>
           )}
 
-          {recent.length === 0 ? (
+          {filteredOrders.length === 0 ? (
             <p className="text-sm text-gray-400">
-              No synced Shopify orders yet. Create an order or click <span className="font-medium text-gray-600">Sync orders</span>.
+              {recent.length === 0
+                ? <>No synced Shopify orders yet. Create an order or click <span className="font-medium text-gray-600">Sync orders</span>.</>
+                : <>No orders match “{orderSearch.trim()}”.</>}
             </p>
           ) : (
             <div className="overflow-x-auto -mx-1 px-1">
@@ -1110,7 +1132,7 @@ export default function Orders() {
                   </tr>
                 </thead>
                 <tbody>
-                  {recent.map((row) => (
+                  {filteredOrders.map((row) => (
                     <tr key={row.id} className="border-b border-gray-50">
                       <td className="py-2 pr-3 font-mono text-gray-800">
                         {row.shopify_order_name ?? '—'}

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useCustomers } from '../hooks/useCustomers'
 import { createCustomer, ensureConversation } from '../lib/db'
 import { useTenantStore } from '../store/tenantStore'
-import { normalizePhoneForStorage, formatPhoneDisplay, isValidIndianMobile } from '../lib/phone'
+import { normalizePhoneForStorage, formatPhoneDisplay, isValidIndianMobile, matchesPhoneSearch } from '../lib/phone'
 import { toast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
 import { DataTable, type DataTableColumn } from '../components/DataTable'
@@ -218,8 +218,7 @@ export default function Customers() {
           const s = q.trim().toLowerCase()
           return (
             c.name.toLowerCase().includes(s)
-            || c.phone.includes(s)
-            || formatPhoneDisplay(c.phone).includes(s)
+            || matchesPhoneSearch(c.phone, q)
             || (c.assignedTo ?? '').toLowerCase().includes(s)
             || (c.tags ?? []).some((t) => t.toLowerCase().includes(s))
           )

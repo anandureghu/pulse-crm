@@ -8,7 +8,7 @@ import { useUsers } from '../hooks/useUsers'
 import { useAuthStore } from '../store/authStore'
 import { sendMessageFn, assignEnquiryFn } from '../lib/functions'
 import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
-import { formatPhoneDisplay, telHref } from '../lib/phone'
+import { formatPhoneDisplay, matchesPhoneSearch, telHref } from '../lib/phone'
 import {
   collectAssigneeOptions,
   collectTagOptions,
@@ -201,7 +201,7 @@ export default function Inbox() {
     const tags = (customerById.get(c.customerId)?.tags ?? []).join(' ').toLowerCase()
     return (
       name.includes(q)
-      || phone.includes(q)
+      || matchesPhoneSearch(phone, search)
       || assignee.includes(q)
       || status.includes(q)
       || tags.includes(q)
@@ -442,7 +442,7 @@ export default function Inbox() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search conversations…"
+            placeholder="Search name, phone, tags…"
             className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-gray-50"
           />
           {filterChips.length > 0 && (
