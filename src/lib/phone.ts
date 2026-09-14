@@ -86,3 +86,38 @@ export function toE164(phone: string | null | undefined): string | null {
   const local = indianLocal10(phone)
   return local ? `+91${local}` : null
 }
+
+/**
+ * Digit forms useful for partial phone search (raw digits, with/without 91, trunk 0).
+ */
+function phoneSearchForms(digits: string): string[] {
+  const forms = new Set<string>([digits])
+  if (digits.startsWith('91') && digits.length > 10) forms.add(digits.slice(2))
+  if (digits.startsWith('0') && digits.length > 10) forms.add(digits.replace(/^0+/, ''))
+  if (digits.length === 10) forms.add(`91${digits}`)
+  const local = indianLocal10(digits)
+  if (local) {
+    forms.add(local)
+    forms.add(`91${local}`)
+  }
+  return [...forms]
+}
+
+/**
+ * True when `query` looks like a phone fragment and matches `phone`
+ * regardless of +91 / spaces / leading 0 formatting.
+ * Returns false when the query has no digits (so name-only queries skip this path).
+ */
+export function matchesPhoneSearch(
+  phone: string | null | undefined,
+  query: string,
+): boolean {
+  const qDigits = digitsOnly(query)
+  if (!qDigits) return false
+  const pDigits = digitsOnly(phone ?? '')
+  if (!pDigits) return false
+
+  const pForms = phoneSearchForms(pDigits)
+  const qForms = phoneSearchForms(qDigits)
+  return pForms.some((p) => qForms.some((q) => p.includes(q) || q.includes(p)))
+}
