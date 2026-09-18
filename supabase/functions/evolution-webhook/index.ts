@@ -186,11 +186,19 @@ async function handleMessageUpsert(
   const { data } = payload
   const remoteJid = data.key.remoteJid ?? ''
 
-  if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return
+  if (remoteJid.includes('@broadcast')) return
 
+  const isGroup = remoteJid.includes('@g.us')
   const fromMe = Boolean(data.key.fromMe)
-  const phone = phoneFromJid(remoteJid)
-  if (!phone || phone.length < 8) return
+
+  // For groups use the full JID as the unique identifier; for 1-1 chats normalise to phone digits
+  const phone = isGroup ? remoteJid : phoneFromJid(remoteJid)
+  if (!isGroup && (!phone || phone.length < 8)) return
+
+  // Who actually sent the message inside a group (participant JID → display name)
+  const senderName = isGroup
+    ? (data.pushName ?? (data.key.participant ? phoneFromJid(data.key.participant) : null) ?? null)
+    : null
 
   const text = extractText(data)
   const type = messageType(data)
@@ -229,18 +237,23 @@ async function handleMessageUpsert(
 
   if (existingCustomer) {
     customerId = existingCustomer.id
-    if (!fromMe && data.pushName && existingCustomer.name === phone) {
+    // Update name from pushName when: 1-1 chat and the stored name is still the raw phone/jid
+    if (!fromMe && !isGroup && data.pushName && existingCustomer.name === phone) {
       await supabase.from('customers').update({ name: data.pushName }).eq('id', customerId)
     }
   } else {
     isNewCustomer = true
+    // Groups: use the JID as initial name (users can rename from the CRM)
+    // 1-1: use pushName if available, else phone
+    const name = isGroup ? phone : (data.pushName ?? phone)
     const { data: newCustomer, error } = await supabase
       .from('customers')
       .insert({
         phone,
-        name: data.pushName ?? phone,
+        name,
         assigned_to: null,
         tags: [],
+        is_group: isGroup,
         organization_id: orgId,
       })
       .select('id')
@@ -294,6 +307,7 @@ async function handleMessageUpsert(
       id: messageId,
       conversation_id: conversationId,
       sender,
+      sender_name: senderName,
       type,
       text,
       media,
@@ -305,6 +319,8 @@ async function handleMessageUpsert(
   )
 
   if (fromMe) return
+  // Groups don't create enquiries — they're not individual leads
+  if (isGroup) return
 
   const activityDesc = text
     ? `Customer sent message: "${text.slice(0, 100)}"`

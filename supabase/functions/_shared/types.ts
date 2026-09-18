@@ -2,7 +2,7 @@ export interface EvolutionWebhookMessage {
   event: string
   instance: string
   data: {
-    key: { remoteJid: string; fromMe: boolean; id: string }
+    key: { remoteJid: string; fromMe: boolean; id: string; participant?: string }
     pushName?: string
     message?: {
       conversation?: string

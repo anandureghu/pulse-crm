@@ -13,10 +13,12 @@ function realCaption(text: string | undefined): string | null {
 export function MessageBubble({
   msg,
   customerPhone,
+  isGroup,
   onStar,
 }: {
   msg: Message
   customerPhone?: string
+  isGroup?: boolean
   onStar?: (id: string, starred: boolean) => void
 }) {
   const isAgent = msg.sender === 'agent'
@@ -52,6 +54,9 @@ export function MessageBubble({
             : 'bg-white text-gray-800 rounded-bl-none'
         }`}
       >
+        {isGroup && !isAgent && msg.senderName && (
+          <p className="text-xs font-semibold text-green-700 mb-0.5">{msg.senderName}</p>
+        )}
         <MediaContent msg={msg} isAgent={isAgent} customerPhone={customerPhone} />
         <div
           className={`text-xs mt-1 flex items-center gap-1 justify-end ${

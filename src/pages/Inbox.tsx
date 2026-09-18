@@ -488,7 +488,10 @@ export default function Inbox() {
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-sm text-gray-800 truncate">
+                  <span className="font-medium text-sm text-gray-800 truncate flex items-center gap-1">
+                    {customerById.get(c.customerId)?.isGroup && (
+                      <span className="text-gray-400 flex-shrink-0" title="Group">👥</span>
+                    )}
                     {customerName(c)}
                   </span>
                   <span className="text-xs text-gray-400 flex-shrink-0">
@@ -540,7 +543,7 @@ export default function Inbox() {
                 </svg>
               </button>
               <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0">
-                {customerName(conv)[0]?.toUpperCase()}
+                {selectedCustomer?.isGroup ? '👥' : customerName(conv)[0]?.toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
@@ -675,6 +678,7 @@ export default function Inbox() {
                   key={msg.id}
                   msg={msg}
                   customerPhone={selectedCustomer?.phone}
+                  isGroup={selectedCustomer?.isGroup}
                   onStar={msg.id.startsWith('tmp-') ? undefined : handleStar}
                 />
               ))}

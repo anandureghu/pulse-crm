@@ -68,6 +68,7 @@ export default function Customers() {
         assignedTo: null,
         tags: [],
         aiAutoreply: false,
+        isGroup: false,
       })
       const convId = await ensureConversation(scope, created.id)
       toast('Contact added', 'success')

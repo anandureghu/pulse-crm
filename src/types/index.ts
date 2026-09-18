@@ -24,6 +24,7 @@ export interface Customer {
   assignedTo: string | null
   tags: string[]
   aiAutoreply: boolean
+  isGroup: boolean
   email?: string | null
   shopifyCustomerId?: string | null
   createdAt: string
@@ -55,6 +56,7 @@ export interface Message {
   organizationId: string
   conversationId: string
   sender: 'customer' | 'agent'
+  senderName?: string | null
   type: 'text' | 'image' | 'audio' | 'video' | 'document'
   text: string
   media?: string
