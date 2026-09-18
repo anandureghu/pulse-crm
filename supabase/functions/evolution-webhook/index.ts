@@ -123,6 +123,28 @@ async function evoCfgFromInstance(
   return { apiUrl, apiKey, activeInstance }
 }
 
+async function fetchProfilePicUrl(
+  cfg: { apiUrl: string; apiKey: string; activeInstance: string },
+  jid: string,
+): Promise<string | null> {
+  try {
+    const base = cfg.apiUrl.replace(/\/$/, '')
+    const res = await fetch(
+      `${base}/chat/fetchProfilePictureUrl/${cfg.activeInstance}`,
+      {
+        method: 'POST',
+        headers: { apikey: cfg.apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: jid }),
+      },
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    return (data.profilePictureUrl as string | undefined) ?? null
+  } catch {
+    return null
+  }
+}
+
 async function storeMedia(
   supabase: ReturnType<typeof makeServiceClient>,
   messageId: string,
@@ -227,7 +249,7 @@ async function handleMessageUpsert(
 
   const { data: existingCustomer } = await supabase
     .from('customers')
-    .select('id, name')
+    .select('id, name, profile_pic_url')
     .eq('organization_id', orgId)
     .eq('phone', phone)
     .maybeSingle()
@@ -241,11 +263,26 @@ async function handleMessageUpsert(
     if (!fromMe && !isGroup && data.pushName && existingCustomer.name === phone) {
       await supabase.from('customers').update({ name: data.pushName }).eq('id', customerId)
     }
+    // Lazy-fetch profile pic if we don't have one yet
+    if (!existingCustomer.profile_pic_url) {
+      const cfg = await evoCfgFromInstance(supabase, tenant)
+      if (cfg) {
+        const picUrl = await fetchProfilePicUrl(cfg, remoteJid)
+        if (picUrl) {
+          await supabase.from('customers').update({ profile_pic_url: picUrl }).eq('id', customerId)
+        }
+      }
+    }
   } else {
     isNewCustomer = true
     // Groups: use the JID as initial name (users can rename from the CRM)
     // 1-1: use pushName if available, else phone
     const name = isGroup ? phone : (data.pushName ?? phone)
+    let newProfilePicUrl: string | null = null
+    const cfgForPic = await evoCfgFromInstance(supabase, tenant)
+    if (cfgForPic) {
+      newProfilePicUrl = await fetchProfilePicUrl(cfgForPic, remoteJid)
+    }
     const { data: newCustomer, error } = await supabase
       .from('customers')
       .insert({
@@ -254,6 +291,7 @@ async function handleMessageUpsert(
         assigned_to: null,
         tags: [],
         is_group: isGroup,
+        profile_pic_url: newProfilePicUrl,
         organization_id: orgId,
       })
       .select('id')

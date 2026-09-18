@@ -25,6 +25,7 @@ export interface Customer {
   tags: string[]
   aiAutoreply: boolean
   isGroup: boolean
+  profilePicUrl?: string | null
   email?: string | null
   shopifyCustomerId?: string | null
   createdAt: string

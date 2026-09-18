@@ -479,50 +479,59 @@ export default function Inbox() {
           {filtered.map((c) => {
             const assignee = customerAssignee(c)
             const status = customerStatus(c)
+            const cust = customerById.get(c.customerId)
             return (
               <button
                 key={c.id}
                 onClick={() => setSelected(c.id)}
-                className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                className={`w-full text-left px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
                   selected === c.id ? 'bg-green-50' : ''
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-sm text-gray-800 truncate flex items-center gap-1">
-                    {customerById.get(c.customerId)?.isGroup && (
-                      <span className="text-gray-400 flex-shrink-0" title="Group">👥</span>
-                    )}
-                    {customerName(c)}
-                  </span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">
-                    {formatConversationTime(c.updatedAt)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between mt-1 gap-2">
-                  <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
-                  {c.unreadCount > 0 && (
-                    <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
-                      {c.unreadCount}
-                    </span>
-                  )}
-                </div>
-                {(assignee || status) && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {status && (
-                      <span
-                        className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
-                        title={`Status: ${statusLabel(status)}`}
-                      >
-                        {statusLabel(status)}
-                      </span>
-                    )}
-                    {assignee && (
-                      <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
-                        {assignee}
-                      </span>
+                <div className="flex items-start gap-2.5">
+                  <div className="w-10 h-10 rounded-full flex-shrink-0 overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm">
+                    {cust?.profilePicUrl ? (
+                      <img src={cust.profilePicUrl} alt="" className="w-full h-full object-cover" />
+                    ) : cust?.isGroup ? (
+                      <span className="text-base">👥</span>
+                    ) : (
+                      customerName(c)[0]?.toUpperCase()
                     )}
                   </div>
-                )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm text-gray-800 truncate">{customerName(c)}</span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">
+                        {formatConversationTime(c.updatedAt)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between mt-0.5 gap-2">
+                      <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
+                      {c.unreadCount > 0 && (
+                        <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
+                          {c.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                    {(assignee || status) && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {status && (
+                          <span
+                            className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
+                            title={`Status: ${statusLabel(status)}`}
+                          >
+                            {statusLabel(status)}
+                          </span>
+                        )}
+                        {assignee && (
+                          <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
+                            {assignee}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </button>
             )
           })}
@@ -542,8 +551,14 @@ export default function Inbox() {
                   <path d="M13 16l-6-6 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </button>
-              <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0">
-                {selectedCustomer?.isGroup ? '👥' : customerName(conv)[0]?.toUpperCase()}
+              <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0 overflow-hidden">
+                {selectedCustomer?.profilePicUrl ? (
+                  <img src={selectedCustomer.profilePicUrl} alt="" className="w-full h-full object-cover" />
+                ) : selectedCustomer?.isGroup ? (
+                  <span className="text-base">👥</span>
+                ) : (
+                  customerName(conv)[0]?.toUpperCase()
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
