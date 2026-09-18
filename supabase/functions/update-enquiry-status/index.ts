@@ -1,4 +1,5 @@
 import { makeServiceClient, cors, json, err } from '../_shared/supabase.ts'
+import { sendWebPushBatch } from '../_shared/webpush.ts'
 
 const NOTIFY_ON: Record<string, string> = {
   sale_completed: 'sale_confirmed',
@@ -55,6 +56,29 @@ Deno.serve(async (req) => {
         },
       }),
     }).catch(() => {})
+
+    // Push notification for order won
+    if (status === 'sale_completed') {
+      const agentEmail = agent?.email ?? 'Team member'
+      const customerName = customer?.name ?? 'Customer'
+
+      const { data: subs } = await supabase
+        .from('user_push_subscriptions')
+        .select('id, endpoint, p256dh, auth, users!inner(notification_preferences)')
+        .filter('users.notification_preferences->order_won', 'eq', 'true')
+
+      if (subs?.length) {
+        await sendWebPushBatch(
+          subs.map((s) => ({ id: s.id, endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth })),
+          {
+            title: '🎉 Sale completed!',
+            body: `${customerName} — closed by ${agentEmail}`,
+            url: '/pipeline',
+            tag: 'order-won',
+          },
+        )
+      }
+    }
   }
 
   return json({ ok: true })
