@@ -104,7 +104,7 @@ async function sendOne(
       'Content-Type': 'application/json',
       TTL: '86400',
     },
-    body: enc.encode(JSON.stringify(payload)),
+    body: JSON.stringify(payload),
   })
 
   return res.status
