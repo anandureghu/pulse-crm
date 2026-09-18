@@ -6,7 +6,7 @@ import { useCustomers } from '../hooks/useCustomers'
 import { useEnquiries } from '../hooks/useEnquiries'
 import { useUsers } from '../hooks/useUsers'
 import { useAuthStore } from '../store/authStore'
-import { sendMessageFn, assignEnquiryFn } from '../lib/functions'
+import { sendMessageFn, assignEnquiryFn, uploadMediaFile } from '../lib/functions'
 import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
 import {
@@ -81,6 +81,8 @@ export default function Inbox() {
   const actionsRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const slashKeyRef = useRef<((e: React.KeyboardEvent) => boolean) | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
 
   const messages = useMessages(selected)
   const conv = conversations.find((c) => c.id === selected)
@@ -112,6 +114,7 @@ export default function Inbox() {
   useEffect(() => {
     setAiSuggestion(null)
     setActionsOpen(false)
+    setPendingFiles([])
   }, [selected])
 
   // Deep-link from "Add customer" → open that conversation
@@ -237,33 +240,82 @@ export default function Inbox() {
   }, [allMessages.length])
 
   const handleSend = async () => {
-    if (!text.trim() || !selected || sending || !conv) return
+    if (!selected || sending || !conv) return
     if (parseSlashInput(text).open) return
+    const hasText = !!text.trim()
+    const hasFiles = pendingFiles.length > 0
+    if (!hasText && !hasFiles) return
+
     const msgText = text.trim()
+    const filesToSend = [...pendingFiles]
     setSending(true)
     setText('')
-
-    const tmpMsg: Message = {
-      id: `tmp-${Date.now()}`,
-      organizationId: conv.organizationId,
-      conversationId: selected,
-      sender: 'agent',
-      type: 'text',
-      text: msgText,
-      status: 'sent',
-      timestamp: new Date().toISOString(),
-    }
-    setOptimistic((prev) => [...prev, tmpMsg])
+    setPendingFiles([])
 
     try {
-      await sendMessageFn({ conversationId: selected, text: msgText })
-    } catch {
-      setOptimistic((prev) => prev.filter((m) => m.id !== tmpMsg.id))
-      setText(msgText)
-      toast('Failed to send message', 'error')
+      for (const file of filesToSend) {
+        const mediaType = detectMediaType(file)
+        const previewUrl = URL.createObjectURL(file)
+        const tmpId = `tmp-${Date.now()}-${Math.random()}`
+        const tmpMsg: Message = {
+          id: tmpId,
+          organizationId: conv.organizationId,
+          conversationId: selected,
+          sender: 'agent',
+          type: mediaType,
+          text: '',
+          media: previewUrl,
+          status: 'sent',
+          timestamp: new Date().toISOString(),
+        }
+        setOptimistic((prev) => [...prev, tmpMsg])
+        const mediaUrl = await uploadMediaFile(file)
+        if (!mediaUrl) {
+          setOptimistic((prev) => prev.filter((m) => m.id !== tmpId))
+          toast(`Failed to upload ${file.name}`, 'error')
+          continue
+        }
+        await sendMessageFn({ conversationId: selected, mediaUrl, mediaType })
+        setOptimistic((prev) => prev.filter((m) => m.id !== tmpId))
+      }
+
+      if (hasText) {
+        const tmpMsg: Message = {
+          id: `tmp-${Date.now()}`,
+          organizationId: conv.organizationId,
+          conversationId: selected,
+          sender: 'agent',
+          type: 'text',
+          text: msgText,
+          status: 'sent',
+          timestamp: new Date().toISOString(),
+        }
+        setOptimistic((prev) => [...prev, tmpMsg])
+        try {
+          await sendMessageFn({ conversationId: selected, text: msgText })
+        } catch {
+          setOptimistic((prev) => prev.filter((m) => m.id !== tmpMsg.id))
+          setText(msgText)
+          toast('Failed to send message', 'error')
+        }
+      }
     } finally {
       setSending(false)
     }
+  }
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData.files)
+    if (files.length > 0) {
+      e.preventDefault()
+      setPendingFiles((prev) => [...prev, ...files])
+    }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files])
+    e.target.value = ''
   }
 
   const handleSendProduct = async (product: SendableProduct) => {
@@ -742,6 +794,25 @@ export default function Inbox() {
                 onSendProduct={handleSendProduct}
                 onKeyIntercept={(handler) => { slashKeyRef.current = handler }}
               />
+              {pendingFiles.length > 0 && (
+                <div className="flex gap-2 flex-wrap mb-2 p-2 bg-gray-50 rounded-xl">
+                  {pendingFiles.map((f, i) => (
+                    <PendingFilePreview
+                      key={i}
+                      file={f}
+                      onRemove={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
+                    />
+                  ))}
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xlsx,.xls,.csv,.txt"
+                onChange={handleFileChange}
+              />
               <div className="flex gap-2 items-end">
                 <button
                   onClick={handleAiSuggest}
@@ -756,17 +827,25 @@ export default function Inbox() {
                     </svg>
                   ) : '✨'}
                 </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach file"
+                  className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-lg"
+                >
+                  📎
+                </button>
                 <textarea
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
                   placeholder="Type a message…  /products  /reply"
                   rows={1}
                   className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
                 />
                 <button
                   onClick={handleSend}
-                  disabled={!text.trim() || sending || parseSlashInput(text).open}
+                  disabled={((!text.trim() && pendingFiles.length === 0) || sending || parseSlashInput(text).open)}
                   className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
                 >
                   ➤
@@ -801,6 +880,43 @@ export default function Inbox() {
           setFiltersOpen(false)
         }}
       />
+    </div>
+  )
+}
+
+function detectMediaType(file: File): 'image' | 'video' | 'audio' | 'document' {
+  if (file.type.startsWith('image/')) return 'image'
+  if (file.type.startsWith('video/')) return 'video'
+  if (file.type.startsWith('audio/')) return 'audio'
+  return 'document'
+}
+
+function PendingFilePreview({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [preview, setPreview] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!file.type.startsWith('image/')) return
+    const url = URL.createObjectURL(file)
+    setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
+  return (
+    <div className="relative flex-shrink-0">
+      {preview ? (
+        <img src={preview} alt={file.name} className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
+      ) : (
+        <div className="w-16 h-16 rounded-lg border border-gray-200 bg-gray-100 flex flex-col items-center justify-center p-1 gap-0.5">
+          <span className="text-xl leading-none">📄</span>
+          <span className="text-[9px] text-gray-500 truncate w-full text-center leading-tight">{file.name}</span>
+        </div>
+      )}
+      <button
+        onClick={onRemove}
+        className="absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] leading-none"
+      >
+        ✕
+      </button>
     </div>
   )
 }
