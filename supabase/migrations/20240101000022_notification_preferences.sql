@@ -10,8 +10,8 @@ create table public.user_push_subscriptions (
   constraint user_push_subscriptions_endpoint_key unique (endpoint)
 );
 
-create index user_push_subscriptions_user_id_idx on public.user_push_subscriptions (user_id);
-create index user_push_subscriptions_org_id_idx  on public.user_push_subscriptions (organization_id);
+create index idx_user_push_subscriptions_user_id on public.user_push_subscriptions (user_id);
+create index idx_user_push_subscriptions_organization_id  on public.user_push_subscriptions (organization_id);
 
 -- Per-user notification type preferences (default everything OFF)
 alter table public.users
