@@ -1,4 +1,12 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import {
+  enablePushNotifications,
+  disablePushNotifications,
+  isPushSubscribed,
+  loadNotificationPreferences,
+  saveNotificationPreferences,
+  type NotificationPreferences,
+} from '../lib/notifications'
 import { useShallow } from 'zustand/react/shallow'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -852,6 +860,8 @@ export default function Settings() {
           </div>
         </div>
 
+        <NotificationSettings />
+
       </div>
 
       {/* ── QR Modal ── */}
@@ -893,6 +903,103 @@ export default function Settings() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function NotificationSettings() {
+  const [subscribed, setSubscribed] = useState(false)
+  const [prefs, setPrefs] = useState<NotificationPreferences>({
+    inbox_messages: false,
+    order_won: false,
+    followup_reminders: false,
+  })
+  const [saving, setSaving] = useState(false)
+  const [checking, setChecking] = useState(true)
+
+  useEffect(() => {
+    isPushSubscribed().then((s) => {
+      setSubscribed(s)
+      setChecking(false)
+    })
+    loadNotificationPreferences().then(setPrefs)
+  }, [])
+
+  const handleMainToggle = async () => {
+    setSaving(true)
+    if (subscribed) {
+      await disablePushNotifications()
+      setSubscribed(false)
+      const off: NotificationPreferences = { inbox_messages: false, order_won: false, followup_reminders: false }
+      setPrefs(off)
+      await saveNotificationPreferences(off)
+    } else {
+      const ok = await enablePushNotifications()
+      setSubscribed(ok)
+      if (!ok) alert('Could not enable notifications. Check browser permissions.')
+    }
+    setSaving(false)
+  }
+
+  const handlePrefToggle = async (key: keyof NotificationPreferences) => {
+    const next = { ...prefs, [key]: !prefs[key] }
+    setPrefs(next)
+    await saveNotificationPreferences(next)
+  }
+
+  const types: { key: keyof NotificationPreferences; label: string; description: string }[] = [
+    { key: 'inbox_messages',     label: 'New messages',        description: 'When a customer sends a WhatsApp message' },
+    { key: 'order_won',          label: 'Order won',           description: 'When an enquiry is marked as sale completed' },
+    { key: 'followup_reminders', label: 'Follow-up reminders', description: 'Daily reminder for follow-ups due today' },
+  ]
+
+  if (checking) return null
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <h2 className="text-lg font-semibold text-gray-800 mb-1">Push Notifications</h2>
+      <p className="text-sm text-gray-500 mb-5">
+        Notifications are sent to this browser only. Each team member controls their own settings.
+      </p>
+
+      <div className="flex items-center justify-between py-3 border-b border-gray-100">
+        <div>
+          <p className="text-sm font-medium text-gray-700">Browser notifications</p>
+          <p className="text-xs text-gray-400">{subscribed ? 'This browser will receive notifications' : 'Off — click to enable'}</p>
+        </div>
+        <button
+          onClick={handleMainToggle}
+          disabled={saving}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+            subscribed ? 'bg-green-500' : 'bg-gray-300'
+          }`}
+        >
+          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+            subscribed ? 'translate-x-6' : 'translate-x-1'
+          }`} />
+        </button>
+      </div>
+
+      <div className={`mt-2 space-y-1 ${!subscribed ? 'opacity-40 pointer-events-none' : ''}`}>
+        {types.map(({ key, label, description }) => (
+          <div key={key} className="flex items-center justify-between py-3">
+            <div>
+              <p className="text-sm font-medium text-gray-700">{label}</p>
+              <p className="text-xs text-gray-400">{description}</p>
+            </div>
+            <button
+              onClick={() => handlePrefToggle(key)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                prefs[key] ? 'bg-green-500' : 'bg-gray-300'
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                prefs[key] ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
