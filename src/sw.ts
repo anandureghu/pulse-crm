@@ -20,10 +20,20 @@ registerRoute(
 self.addEventListener('push', (event) => {
   let title = 'pulsrm'
   let body = 'You have a new notification'
+  let url = '/'
+  let tag: string | undefined
+
   try {
-    const data = event.data?.json() as { title?: string; body?: string } | undefined
+    const data = event.data?.json() as {
+      title?: string
+      body?: string
+      url?: string
+      tag?: string
+    } | undefined
     if (data?.title) title = data.title
-    if (data?.body) body = data.body
+    if (data?.body)  body  = data.body
+    if (data?.url)   url   = data.url
+    if (data?.tag)   tag   = data.tag
   } catch {
     const text = event.data?.text()
     if (text) body = text
@@ -43,7 +53,8 @@ self.addEventListener('push', (event) => {
         body,
         icon: '/pwa-192x192.png',
         badge: '/pwa-192x192.png',
-        data: { url: '/' },
+        tag,
+        data: { url },
       })
     })(),
   )
