@@ -34,7 +34,51 @@ update public.call_logs      set instance_id = null;
 update public.payments       set instance_id = null;
 update public.shopify_orders set instance_id = null;
 
--- ── 3. Replace instance-scoped unique indexes with org-scoped ones ────────────
+-- ── 3. Deduplicate customers per (organization_id, phone) ────────────────────
+-- Previous unique constraint was per instance, so the same phone could exist
+-- multiple times across instances in the same org. Pick the winner (most
+-- recently updated, preferring a real name over a raw phone number), re-point
+-- all FK references, then delete the losers.
+
+do $$
+declare
+  dup record;
+  winner_id uuid;
+  loser_ids uuid[];
+begin
+  for dup in
+    select organization_id, phone
+    from public.customers
+    group by organization_id, phone
+    having count(*) > 1
+  loop
+    -- Winner: prefer named contact, then most recently updated
+    select id into winner_id
+    from public.customers
+    where organization_id = dup.organization_id and phone = dup.phone
+    order by
+      case when name <> phone then 0 else 1 end,
+      updated_at desc nulls last
+    limit 1;
+
+    select array_agg(id) into loser_ids
+    from public.customers
+    where organization_id = dup.organization_id and phone = dup.phone
+      and id <> winner_id;
+
+    -- Re-point foreign keys to winner
+    update public.conversations  set customer_id = winner_id where customer_id = any(loser_ids);
+    update public.enquiries      set customer_id = winner_id where customer_id = any(loser_ids);
+    update public.customer_files set customer_id = winner_id where customer_id = any(loser_ids);
+    update public.call_logs      set customer_id = winner_id where customer_id = any(loser_ids);
+    update public.payments       set customer_id = winner_id where customer_id = any(loser_ids);
+
+    -- Delete duplicate customer rows
+    delete from public.customers where id = any(loser_ids);
+  end loop;
+end $$;
+
+-- ── 4. Replace instance-scoped unique indexes with org-scoped ones ────────────
 
 drop index if exists public.customers_instance_phone_uidx;
 create unique index if not exists customers_org_phone_uidx
@@ -49,7 +93,7 @@ create unique index if not exists shopify_orders_org_shopify_order_id_uidx
   on public.shopify_orders (organization_id, shopify_order_id)
   where shopify_order_id is not null;
 
--- ── 4. Drop instance-composite performance indexes, add org-only ones ─────────
+-- ── 5. Drop instance-composite performance indexes, add org-only ones ─────────
 
 drop index if exists public.customers_org_instance_idx;
 drop index if exists public.conversations_org_instance_idx;
@@ -61,7 +105,7 @@ create index if not exists conversations_org_idx on public.conversations (organi
 create index if not exists messages_org_idx      on public.messages      (organization_id);
 create index if not exists enquiries_org_idx     on public.enquiries     (organization_id);
 
--- ── 5. Rewrite RLS insert policies (remove instance_belongs_to_org check) ────
+-- ── 6. Rewrite RLS insert policies (remove instance_belongs_to_org check) ────
 
 drop policy if exists "customers: org member insert" on public.customers;
 create policy "customers: org member insert"
