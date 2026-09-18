@@ -84,6 +84,39 @@ drop index if exists public.customers_instance_phone_uidx;
 create unique index if not exists customers_org_phone_uidx
   on public.customers (organization_id, phone);
 
+-- Deduplicate conversations per (organization_id, customer_id) before indexing
+do $$
+declare
+  dup record;
+  winner_id uuid;
+  loser_ids uuid[];
+begin
+  for dup in
+    select organization_id, customer_id
+    from public.conversations
+    group by organization_id, customer_id
+    having count(*) > 1
+  loop
+    -- Winner: most recently updated (most recent message activity)
+    select id into winner_id
+    from public.conversations
+    where organization_id = dup.organization_id and customer_id = dup.customer_id
+    order by updated_at desc nulls last
+    limit 1;
+
+    select array_agg(id) into loser_ids
+    from public.conversations
+    where organization_id = dup.organization_id and customer_id = dup.customer_id
+      and id <> winner_id;
+
+    -- Re-point messages to the winning conversation
+    update public.messages set conversation_id = winner_id where conversation_id = any(loser_ids);
+
+    -- Delete duplicate conversations
+    delete from public.conversations where id = any(loser_ids);
+  end loop;
+end $$;
+
 drop index if exists public.conversations_instance_customer_uidx;
 create unique index if not exists conversations_org_customer_uidx
   on public.conversations (organization_id, customer_id);
