@@ -83,6 +83,11 @@ export default function Inbox() {
   const slashKeyRef = useRef<((e: React.KeyboardEvent) => boolean) | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordingStreamRef = useRef<MediaStream | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
 
   const messages = useMessages(selected)
   const conv = conversations.find((c) => c.id === selected)
@@ -316,6 +321,55 @@ export default function Inbox() {
     const files = Array.from(e.target.files ?? [])
     if (files.length > 0) setPendingFiles((prev) => [...prev, ...files])
     e.target.value = ''
+  }
+
+  useEffect(() => {
+    if (!isRecording) return
+    const id = setInterval(() => setRecordingSeconds((s) => s + 1), 1000)
+    return () => clearInterval(id)
+  }, [isRecording])
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      recordingStreamRef.current = stream
+      const mimeType =
+        MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
+        : 'audio/webm'
+      const mr = new MediaRecorder(stream, { mimeType })
+      chunksRef.current = []
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      mr.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType })
+        const ext = mr.mimeType.includes('ogg') ? 'ogg' : 'webm'
+        const file = new File([blob], `voice-message.${ext}`, { type: mr.mimeType })
+        setPendingFiles((prev) => [...prev, file])
+        setIsRecording(false)
+        setRecordingSeconds(0)
+      }
+      mr.start()
+      mediaRecorderRef.current = mr
+      setIsRecording(true)
+      setRecordingSeconds(0)
+    } catch {
+      toast('Microphone access denied', 'error')
+    }
+  }
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop()
+  }
+
+  const cancelRecording = () => {
+    const mr = mediaRecorderRef.current
+    if (!mr) return
+    mr.onstop = null
+    mr.stop()
+    recordingStreamRef.current?.getTracks().forEach((t) => t.stop())
+    setIsRecording(false)
+    setRecordingSeconds(0)
   }
 
   const handleSendProduct = async (product: SendableProduct) => {
@@ -813,44 +867,78 @@ export default function Inbox() {
                 accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xlsx,.xls,.csv,.txt"
                 onChange={handleFileChange}
               />
-              <div className="flex gap-2 items-end">
-                <button
-                  onClick={handleAiSuggest}
-                  disabled={aiLoading}
-                  title="Get AI suggested reply"
-                  className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
-                >
-                  {aiLoading ? (
-                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                    </svg>
-                  ) : '✨'}
-                </button>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach file"
-                  className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-lg"
-                >
-                  📎
-                </button>
-                <textarea
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                  placeholder="Type a message…  /products  /reply"
-                  rows={1}
-                  className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={((!text.trim() && pendingFiles.length === 0) || sending || parseSlashInput(text).open)}
-                  className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
-                >
-                  ➤
-                </button>
-              </div>
+              {isRecording ? (
+                <div className="flex items-center gap-3 h-10">
+                  <button
+                    onClick={cancelRecording}
+                    title="Cancel recording"
+                    className="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-base"
+                  >
+                    ✕
+                  </button>
+                  <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-2xl">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                    <span className="text-sm font-mono text-red-600">{fmtRecordingTime(recordingSeconds)}</span>
+                    <span className="text-xs text-red-400">Recording…</span>
+                  </div>
+                  <button
+                    onClick={stopRecording}
+                    title="Stop and attach"
+                    className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 flex-shrink-0 text-base"
+                  >
+                    ✓
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2 items-end">
+                  <button
+                    onClick={handleAiSuggest}
+                    disabled={aiLoading}
+                    title="Get AI suggested reply"
+                    className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
+                  >
+                    {aiLoading ? (
+                      <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                      </svg>
+                    ) : '✨'}
+                  </button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach file"
+                    className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-lg"
+                  >
+                    📎
+                  </button>
+                  <textarea
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    placeholder="Type a message…  /products  /reply"
+                    rows={1}
+                    className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                  />
+                  {!text.trim() && pendingFiles.length === 0 ? (
+                    <button
+                      onClick={startRecording}
+                      title="Record voice message"
+                      className="text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-lg"
+                    >
+                      🎤
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSend}
+                      disabled={sending || parseSlashInput(text).open}
+                      className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
+                    >
+                      ➤
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -884,6 +972,12 @@ export default function Inbox() {
   )
 }
 
+function fmtRecordingTime(s: number): string {
+  const m = Math.floor(s / 60)
+  const sec = s % 60
+  return `${m}:${sec.toString().padStart(2, '0')}`
+}
+
 function detectMediaType(file: File): 'image' | 'video' | 'audio' | 'document' {
   if (file.type.startsWith('image/')) return 'image'
   if (file.type.startsWith('video/')) return 'video'
@@ -892,19 +986,36 @@ function detectMediaType(file: File): 'image' | 'video' | 'audio' | 'document' {
 }
 
 function PendingFilePreview({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const [preview, setPreview] = useState<string | null>(null)
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!file.type.startsWith('image/')) return
     const url = URL.createObjectURL(file)
-    setPreview(url)
+    setObjectUrl(url)
     return () => URL.revokeObjectURL(url)
   }, [file])
 
+  const isImage = file.type.startsWith('image/')
+  const isAudio = file.type.startsWith('audio/')
+
+  if (isAudio && objectUrl) {
+    return (
+      <div className="relative flex items-center gap-2 bg-gray-100 border border-gray-200 rounded-xl px-3 py-2 pr-6 max-w-[220px]">
+        <span className="text-lg flex-shrink-0">🎤</span>
+        <audio controls src={objectUrl} className="h-7 w-32" />
+        <button
+          onClick={onRemove}
+          className="absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] leading-none"
+        >
+          ✕
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="relative flex-shrink-0">
-      {preview ? (
-        <img src={preview} alt={file.name} className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
+      {isImage && objectUrl ? (
+        <img src={objectUrl} alt={file.name} className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
       ) : (
         <div className="w-16 h-16 rounded-lg border border-gray-200 bg-gray-100 flex flex-col items-center justify-center p-1 gap-0.5">
           <span className="text-xl leading-none">📄</span>
