@@ -199,7 +199,6 @@ async function handleMessageUpsert(
   if (!messageId) return
 
   const orgId = tenant.organization_id
-  const instanceId = tenant.id
 
   let media: string | null = null
   if (type !== 'text') {
@@ -221,7 +220,7 @@ async function handleMessageUpsert(
   const { data: existingCustomer } = await supabase
     .from('customers')
     .select('id, name')
-    .eq('instance_id', instanceId)
+    .eq('organization_id', orgId)
     .eq('phone', phone)
     .maybeSingle()
 
@@ -243,7 +242,6 @@ async function handleMessageUpsert(
         assigned_to: null,
         tags: [],
         organization_id: orgId,
-        instance_id: instanceId,
       })
       .select('id')
       .single()
@@ -254,7 +252,7 @@ async function handleMessageUpsert(
   const { data: existingConv } = await supabase
     .from('conversations')
     .select('id')
-    .eq('instance_id', instanceId)
+    .eq('organization_id', orgId)
     .eq('customer_id', customerId)
     .maybeSingle()
 
@@ -284,7 +282,6 @@ async function handleMessageUpsert(
         unread_count: fromMe ? 0 : 1,
         updated_at: timestamp,
         organization_id: orgId,
-        instance_id: instanceId,
       })
       .select('id')
       .single()
@@ -303,7 +300,6 @@ async function handleMessageUpsert(
       status: fromMe ? 'sent' : 'delivered',
       timestamp,
       organization_id: orgId,
-      instance_id: instanceId,
     },
     { onConflict: 'id', ignoreDuplicates: true },
   )
@@ -324,7 +320,6 @@ async function handleMessageUpsert(
         assigned_to: null,
         value: 0,
         organization_id: orgId,
-        instance_id: instanceId,
       })
       .select('id')
       .single()
@@ -335,7 +330,6 @@ async function handleMessageUpsert(
         description: activityDesc,
         created_by: 'system',
         organization_id: orgId,
-        instance_id: instanceId,
       })
     }
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
@@ -353,7 +347,7 @@ async function handleMessageUpsert(
     const { data: enq } = await supabase
       .from('enquiries')
       .select('id')
-      .eq('instance_id', instanceId)
+      .eq('organization_id', orgId)
       .eq('customer_id', customerId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -365,7 +359,6 @@ async function handleMessageUpsert(
         description: activityDesc,
         created_by: 'system',
         organization_id: orgId,
-        instance_id: instanceId,
       })
     }
   }
@@ -388,5 +381,4 @@ async function handleMessageStatus(
     .from('messages')
     .update({ status })
     .eq('id', payload.data.key.id)
-    .eq('instance_id', tenant.id)
 }

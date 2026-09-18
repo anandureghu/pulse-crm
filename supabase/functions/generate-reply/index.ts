@@ -24,18 +24,21 @@ Deno.serve(async (req) => {
 
   const supabase = makeServiceClient()
 
-  // Resolve tenant from conversation, then load AI config from that instance
+  // Resolve tenant from conversation, then load AI config from that org's instance
   const { data: conv } = await supabase
     .from('conversations')
-    .select('instance_id')
+    .select('organization_id')
     .eq('id', conversationId)
     .maybeSingle()
-  if (!conv?.instance_id) return fail('Conversation not found', 404)
+  if (!conv?.organization_id) return fail('Conversation not found', 404)
 
   const { data: inst } = await supabase
     .from('instances')
     .select('settings')
-    .eq('id', conv.instance_id)
+    .eq('organization_id', conv.organization_id)
+    .eq('active', true)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle()
   let resolvedAi = ((inst?.settings as Record<string, unknown> | null)?.ai_config ?? null) as {
     apiKey?: string
