@@ -8,7 +8,6 @@ export function useActivities(enquiryId: string | null) {
   const [activities, setActivities] = useState<Activity[]>([])
   const user = useAuthStore((s) => s.user)
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
 
   useEffect(() => {
     if (!enquiryId) return
@@ -16,9 +15,9 @@ export function useActivities(enquiryId: string | null) {
   }, [enquiryId])
 
   const log = (type: string, description: string) => {
-    if (!enquiryId || !user || !organizationId || !instanceId) return
+    if (!enquiryId || !user || !organizationId) return
     return logActivity(
-      { organizationId, instanceId },
+      { organizationId },
       { enquiryId, type, description, createdBy: user.email ?? user.id },
     )
   }

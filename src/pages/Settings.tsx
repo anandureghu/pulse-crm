@@ -375,7 +375,13 @@ export default function Settings() {
     setInstanceAction({ name: evoName, op: 'delete' })
     setError(null)
     try {
-      await evo('DELETE', `/instance/delete/${evoName}`)
+      // Delete from Evolution API — a 404 means it was already removed there, which is fine
+      try {
+        await evo('DELETE', `/instance/delete/${evoName}`)
+      } catch (e) {
+        if (!(e as Error).message.startsWith('404')) throw e
+      }
+
       if (instanceEvo.activeInstance === evoName) {
         const updated = { ...instanceEvo, activeInstance: '' }
         setInstanceEvo(updated)

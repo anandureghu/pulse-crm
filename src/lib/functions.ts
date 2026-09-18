@@ -87,7 +87,6 @@ export async function sendMessageFn(body: {
     status: 'sent',
     timestamp: new Date().toISOString(),
     organization_id: scope.organizationId,
-    instance_id: scope.instanceId,
   }, { onConflict: 'id', ignoreDuplicates: true })
 
   await supabase.from('conversations').update({
@@ -173,7 +172,7 @@ export async function assignEnquiryFn(body: { enquiryId: string; assignTo: strin
       : 'Enquiry unassigned',
     created_by: await currentUser(),
     ...(scope
-      ? { organization_id: scope.organizationId, instance_id: scope.instanceId }
+      ? { organization_id: scope.organizationId }
       : {}),
   })
 
@@ -196,7 +195,7 @@ export async function updateEnquiryStatusFn(body: { enquiryId: string; status: s
     description: `Status changed to ${body.status.replace(/_/g, ' ')}`,
     created_by: await currentUser(),
     ...(scope
-      ? { organization_id: scope.organizationId, instance_id: scope.instanceId }
+      ? { organization_id: scope.organizationId }
       : {}),
   })
 

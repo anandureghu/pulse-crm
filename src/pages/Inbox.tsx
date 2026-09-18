@@ -246,7 +246,6 @@ export default function Inbox() {
     const tmpMsg: Message = {
       id: `tmp-${Date.now()}`,
       organizationId: conv.organizationId,
-      instanceId: conv.instanceId,
       conversationId: selected,
       sender: 'agent',
       type: 'text',
@@ -277,7 +276,6 @@ export default function Inbox() {
     const tmpMsg: Message = {
       id: `tmp-${Date.now()}`,
       organizationId: conv.organizationId,
-      instanceId: conv.instanceId,
       conversationId: selected,
       sender: 'agent',
       type: mediaUrl ? 'image' : 'text',

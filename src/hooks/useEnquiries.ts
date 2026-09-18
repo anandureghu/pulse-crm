@@ -5,23 +5,22 @@ import type { Enquiry } from '../types'
 
 export function useEnquiries() {
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [enquiries, setEnquiries] = useState<Enquiry[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!organizationId || !instanceId) {
+    if (!organizationId) {
       setEnquiries([])
       setLoading(false)
       return
     }
     setLoading(true)
-    const unsub = subscribeToEnquiries({ organizationId, instanceId }, (data) => {
+    const unsub = subscribeToEnquiries({ organizationId }, (data) => {
       setEnquiries(data)
       setLoading(false)
     })
     return unsub
-  }, [organizationId, instanceId])
+  }, [organizationId])
 
   return { enquiries, loading }
 }

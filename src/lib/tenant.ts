@@ -169,10 +169,10 @@ export async function reloadInstancesForOrgs(orgIds: string[]) {
     .setInstances((instRows ?? []).map((r) => fromInstanceRow(r as Record<string, unknown>)))
 }
 
-export type TenantScope = { organizationId: string; instanceId: string }
+export type TenantScope = { organizationId: string }
 
 export function requireTenantScope(): TenantScope | null {
-  const { activeOrganizationId, activeInstanceId } = useTenantStore.getState()
-  if (!activeOrganizationId || !activeInstanceId) return null
-  return { organizationId: activeOrganizationId, instanceId: activeInstanceId }
+  const { activeOrganizationId } = useTenantStore.getState()
+  if (!activeOrganizationId) return null
+  return { organizationId: activeOrganizationId }
 }

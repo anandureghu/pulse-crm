@@ -13,23 +13,22 @@ import { toast } from '../components/Toast'
 
 export function useFollowups() {
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [all, setAll] = useState<Followup[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!organizationId || !instanceId) {
+    if (!organizationId) {
       setAll([])
       setLoading(false)
       return
     }
     setLoading(true)
-    const unsub = subscribeToAllFollowups({ organizationId, instanceId }, (data) => {
+    const unsub = subscribeToAllFollowups({ organizationId }, (data) => {
       setAll(data)
       setLoading(false)
     })
     return unsub
-  }, [organizationId, instanceId])
+  }, [organizationId])
 
   const pending = useMemo(() => all.filter((f) => !f.completed), [all])
   const completed = useMemo(() => all.filter((f) => f.completed), [all])
