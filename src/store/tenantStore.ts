@@ -59,5 +59,7 @@ export function selectActiveInstance(state: TenantState): TenantInstance | null 
 
 export function selectOrgInstances(state: TenantState): TenantInstance[] {
   if (!state.activeOrganizationId) return []
-  return state.instances.filter((i) => i.organizationId === state.activeOrganizationId && i.active)
+  return state.instances.filter(
+    (i) => i.organizationId === state.activeOrganizationId && i.active && i.evolutionInstanceName,
+  )
 }
