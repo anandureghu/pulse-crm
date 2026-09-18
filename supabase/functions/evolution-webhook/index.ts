@@ -101,6 +101,7 @@ function messageType(data: EvolutionWebhookMessage['data']): string {
   const msg = data.message
   if (!msg) return 'text'
   if (msg.imageMessage) return 'image'
+  if (msg.stickerMessage) return 'sticker'
   if (msg.audioMessage) return 'audio'
   if (msg.videoMessage) return 'video'
   if (msg.documentMessage) return 'document'
@@ -240,6 +241,7 @@ async function handleMessageUpsert(
       const msg = data.message
       media =
         msg?.imageMessage?.url ??
+        msg?.stickerMessage?.url ??
         msg?.audioMessage?.url ??
         msg?.videoMessage?.url ??
         msg?.documentMessage?.url ??

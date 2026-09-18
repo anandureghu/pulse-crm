@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Message } from '../types'
 import { fetchMediaBase64 } from '../lib/functions'
 
@@ -49,7 +49,9 @@ export function MessageBubble({
 
       <div
         className={`px-3 py-2 rounded-2xl text-sm max-w-xs shadow-sm ${
-          isAgent
+          msg.type === 'sticker'
+            ? 'bg-transparent shadow-none px-0 py-0'
+            : isAgent
             ? 'bg-green-600 text-white rounded-br-none'
             : 'bg-white text-gray-800 rounded-bl-none'
         }`}
@@ -58,14 +60,16 @@ export function MessageBubble({
           <p className="text-xs font-semibold text-green-700 mb-0.5">{msg.senderName}</p>
         )}
         <MediaContent msg={msg} isAgent={isAgent} customerPhone={customerPhone} />
-        <div
-          className={`text-xs mt-1 flex items-center gap-1 justify-end ${
-            isAgent ? 'text-green-200' : 'text-gray-400'
-          }`}
-        >
-          <span>{formatMessageTime(msg.timestamp)}</span>
-          {isAgent && tick}
-        </div>
+        {msg.type !== 'sticker' && (
+          <div
+            className={`text-xs mt-1 flex items-center gap-1 justify-end ${
+              isAgent ? 'text-green-200' : 'text-gray-400'
+            }`}
+          >
+            <span>{formatMessageTime(msg.timestamp)}</span>
+            {isAgent && tick}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -85,6 +89,10 @@ function MediaContent({
 
   if (msg.type === 'image' && msg.media) {
     return <ImageMessage msg={msg} isAgent={isAgent} captionCls={captionCls} caption={caption} customerPhone={customerPhone} />
+  }
+
+  if (msg.type === 'sticker' && msg.media) {
+    return <StickerMessage msg={msg} customerPhone={customerPhone} />
   }
 
   if (msg.type === 'audio' && msg.media) {
@@ -135,6 +143,89 @@ function useEvoSrc(msg: Message, msgType: string, customerPhone?: string) {
   return { src, fetching, failed, onError }
 }
 
+// ── Lightbox ──────────────────────────────────────────────────────────────────
+
+function downloadSrc(src: string, filename = 'image') {
+  if (src.startsWith('data:')) {
+    const mimeMatch = src.match(/^data:([^;]+);/)
+    const mime = mimeMatch?.[1] ?? 'image/jpeg'
+    const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') ?? 'jpg'
+    const base64 = src.split(',')[1]
+    const bytes = atob(base64)
+    const arr = new Uint8Array(bytes.length)
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
+    const blob = new Blob([arr], { type: mime })
+    triggerDownload(URL.createObjectURL(blob), `${filename}.${ext}`)
+  } else {
+    fetch(src)
+      .then(r => r.blob())
+      .then(blob => {
+        const mime = blob.type === 'application/octet-stream' ? 'image/jpeg' : blob.type
+        const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') ?? 'jpg'
+        const fixedBlob = new Blob([blob], { type: mime })
+        triggerDownload(URL.createObjectURL(fixedBlob), `${filename}.${ext}`)
+      })
+      .catch(() => {
+        const a = document.createElement('a')
+        a.href = src
+        a.download = filename
+        a.click()
+      })
+  }
+}
+
+function triggerDownload(url: string, filename: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="relative flex flex-col items-center max-w-[90vw] max-h-[90vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        <img
+          src={src}
+          alt="full size"
+          className="max-w-full max-h-[85vh] object-contain rounded-lg"
+        />
+        <div className="absolute top-2 right-2 flex gap-2">
+          <button
+            onClick={() => downloadSrc(src)}
+            className="bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-base"
+            title="Download"
+          >
+            ↓
+          </button>
+          <button
+            onClick={onClose}
+            className="bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-base"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function MediaFallbackLink({
   href,
   msgType,
@@ -176,6 +267,7 @@ function ImageMessage({
   customerPhone?: string
 }) {
   const { src, fetching, failed, onError } = useEvoSrc(msg, 'image', customerPhone)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   if (failed) return <MediaFallbackLink href={msg.media!} msgType="image" isAgent={isAgent} />
 
@@ -186,17 +278,63 @@ function ImageMessage({
           Loading…
         </div>
       ) : (
-        <a href={src} target="_blank" rel="noreferrer">
+        <button
+          type="button"
+          onClick={() => setLightboxOpen(true)}
+          className="block p-0 border-0 bg-transparent cursor-zoom-in"
+        >
           <img
             src={src}
             alt="photo"
             onError={onError}
-            className="rounded-lg max-w-full max-h-60 object-cover mb-1 cursor-pointer hover:opacity-90 transition-opacity"
+            className="rounded-lg max-w-full max-h-60 object-cover mb-1 hover:opacity-90 transition-opacity"
           />
-        </a>
+        </button>
       )}
       {caption && <p className={`text-xs ${captionCls}`}>{caption}</p>}
+      {lightboxOpen && <Lightbox src={src} onClose={() => setLightboxOpen(false)} />}
     </div>
+  )
+}
+
+// ── Sticker ───────────────────────────────────────────────────────────────────
+
+function StickerMessage({
+  msg,
+  customerPhone,
+}: {
+  msg: Message
+  customerPhone?: string
+}) {
+  const { src, fetching, failed, onError } = useEvoSrc(msg, 'sticker', customerPhone)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+
+  if (failed) return <span className="text-2xl">🎭</span>
+
+  if (fetching) {
+    return (
+      <div className="w-24 h-24 rounded-lg bg-black/10 flex items-center justify-center text-xs opacity-60">
+        Loading…
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setLightboxOpen(true)}
+        className="block p-0 border-0 bg-transparent cursor-zoom-in"
+      >
+        <img
+          src={src}
+          alt="sticker"
+          onError={onError}
+          className="w-28 h-28 object-contain hover:scale-105 transition-transform"
+        />
+      </button>
+      {lightboxOpen && <Lightbox src={src} onClose={() => setLightboxOpen(false)} />}
+    </>
   )
 }
 

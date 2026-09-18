@@ -58,7 +58,7 @@ export interface Message {
   conversationId: string
   sender: 'customer' | 'agent'
   senderName?: string | null
-  type: 'text' | 'image' | 'audio' | 'video' | 'document'
+  type: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker'
   text: string
   media?: string
   status: 'sent' | 'delivered' | 'read'
