@@ -311,6 +311,81 @@ export function subscribeToConversations(
   return () => { supabase.removeChannel(channel) }
 }
 
+export interface ConversationPageParams {
+  organizationId: string
+  cursor?: { updatedAt: string; id: string }
+  limit?: number
+  unread?: 'all' | 'unread' | 'read'
+  activity?: 'all' | 'today' | '7d' | 'stale'
+}
+
+export async function fetchConversationsPage(params: ConversationPageParams): Promise<Conversation[]> {
+  const { organizationId, cursor, limit = 50, unread = 'all', activity = 'all' } = params
+
+  let query = supabase
+    .from('conversations')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .order('updated_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(limit)
+
+  // Cursor: fetch rows older than the last seen item
+  if (cursor) {
+    query = query.or(
+      `updated_at.lt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.lt.${cursor.id})`
+    )
+  }
+
+  // Server-side unread filter (column lives on conversations)
+  if (unread === 'unread') query = query.gt('unread_count', 0)
+  if (unread === 'read') query = query.eq('unread_count', 0)
+
+  // Server-side activity filter (updated_at lives on conversations)
+  if (activity !== 'all') {
+    const now = new Date()
+    if (activity === 'today') {
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+      query = query.gte('updated_at', startOfDay)
+    } else if (activity === '7d') {
+      const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+      query = query.gte('updated_at', since)
+    } else if (activity === 'stale') {
+      const before = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString()
+      query = query.lte('updated_at', before)
+    }
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map((row) => fromRow<Conversation>(row as Record<string, unknown>))
+}
+
+export function subscribeToConversationEvents(
+  organizationId: string,
+  onEvent: (event: 'INSERT' | 'UPDATE', conversation: Conversation) => void
+): Unsubscribe {
+  const channel = supabase
+    .channel(`conv-events:${organizationId}:${crypto.randomUUID()}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'conversations',
+        filter: `organization_id=eq.${organizationId}`,
+      },
+      (payload) => {
+        if (payload.eventType !== 'INSERT' && payload.eventType !== 'UPDATE') return
+        const conv = fromRow<Conversation>(payload.new as Record<string, unknown>)
+        onEvent(payload.eventType, conv)
+      }
+    )
+    .subscribe()
+
+  return () => { supabase.removeChannel(channel) }
+}
+
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 export function subscribeToMessages(
