@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { supabase } from '../lib/supabase'
-import { useConversations, useMessages } from '../hooks/useConversations'
+import { useMessages } from '../hooks/useConversations'
+import { useInfiniteConversations } from '../hooks/useInfiniteConversations'
 import { useCustomers } from '../hooks/useCustomers'
 import { useEnquiries } from '../hooks/useEnquiries'
 import { useUsers } from '../hooks/useUsers'
@@ -15,11 +17,9 @@ import {
   countActiveInboxFilters,
   DEFAULT_INBOX_FILTERS,
   inboxFilterSummaries,
-  matchesActivity,
   matchesAssignee,
   matchesStatus,
   matchesTag,
-  matchesUnread,
   type InboxFilters,
 } from '../lib/inboxFilters'
 import { formatConversationTime } from '../lib/datetime'
@@ -58,7 +58,13 @@ function statusColor(status: string): string {
 }
 
 export default function Inbox() {
-  const { conversations, loading } = useConversations()
+  const {
+    conversations,
+    isLoading: loading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteConversations(filters)
   const { customers } = useCustomers()
   const { enquiries } = useEnquiries()
   const users = useUsers()
@@ -81,6 +87,8 @@ export default function Inbox() {
   const actionsRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const slashKeyRef = useRef<((e: React.KeyboardEvent) => boolean) | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -139,6 +147,22 @@ export default function Inbox() {
     }
   }, [selected, conversations])
 
+  // Infinite scroll sentinel
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage()
+        }
+      },
+      { threshold: 0.1 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
   useEffect(() => {
     if (!actionsOpen) return
     const onDoc = (e: MouseEvent) => {
@@ -190,10 +214,9 @@ export default function Inbox() {
 
   const matchesFilters = (c: Conversation) => {
     const customer = customerById.get(c.customerId)
-    if (!matchesUnread(c, filters.unread)) return false
+    // unread + activity are handled server-side in fetchConversationsPage
     if (!matchesAssignee(customerAssignee(c), filters.assignee, meLabel)) return false
     if (!matchesStatus(customerStatus(c), filters.status)) return false
-    if (!matchesActivity(c.updatedAt, filters.activity)) return false
     if (!matchesTag(customer, filters.tag)) return false
     return true
   }
@@ -214,6 +237,14 @@ export default function Inbox() {
       || status.includes(q)
       || tags.includes(q)
     )
+  })
+
+  // Virtual list — only renders ~15 visible rows regardless of total loaded
+  const virtualizer = useVirtualizer({
+    count: filtered.length + (hasNextPage || isFetchingNextPage ? 1 : 0),
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 72,
+    overscan: 5,
   })
 
   const clearFilterKey = (key: keyof InboxFilters) => {
@@ -575,72 +606,111 @@ export default function Inbox() {
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-auto">
+        <div ref={listRef} className="flex-1 overflow-auto">
           {loading && <p className="text-sm text-gray-400 p-4">Loading…</p>}
           {!loading && filtered.length === 0 && (
             <p className="text-sm text-gray-400 p-4">
               {search || activeFilterCount > 0 ? 'No matches.' : 'No conversations yet.'}
             </p>
           )}
-          {filtered.map((c) => {
-            const assignee = customerAssignee(c)
-            const status = customerStatus(c)
-            const cust = customerById.get(c.customerId)
-            return (
-              <button
-                key={c.id}
-                onClick={() => setSelected(c.id)}
-                className={`w-full text-left px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
-                  selected === c.id ? 'bg-green-50' : ''
-                }`}
-              >
-                <div className="flex items-start gap-2.5">
-                  <div className="w-10 h-10 rounded-full flex-shrink-0 overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm">
-                    {cust?.profilePicUrl ? (
-                      <img src={cust.profilePicUrl} alt="" className="w-full h-full object-cover" />
-                    ) : cust?.isGroup ? (
-                      <span className="text-base">👥</span>
-                    ) : (
-                      customerName(c)[0]?.toUpperCase()
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-sm text-gray-800 truncate">{customerName(c)}</span>
-                      <span className="text-xs text-gray-400 flex-shrink-0">
-                        {formatConversationTime(c.updatedAt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between mt-0.5 gap-2">
-                      <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
-                      {c.unreadCount > 0 && (
-                        <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
-                          {c.unreadCount}
-                        </span>
+          {!loading && filtered.length > 0 && (
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+              {virtualizer.getVirtualItems().map((virtualItem) => {
+                // Last slot = sentinel / loading spinner
+                if (virtualItem.index === filtered.length) {
+                  return (
+                    <div
+                      key="sentinel"
+                      ref={sentinelRef}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualItem.start}px)`,
+                        height: `${virtualItem.size}px`,
+                      }}
+                      className="flex items-center justify-center py-3"
+                    >
+                      {isFetchingNextPage && (
+                        <span className="text-xs text-gray-400">Loading more…</span>
                       )}
                     </div>
-                    {(assignee || status) && (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {status && (
-                          <span
-                            className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
-                            title={`Status: ${statusLabel(status)}`}
-                          >
-                            {statusLabel(status)}
-                          </span>
-                        )}
-                        {assignee && (
-                          <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
-                            {assignee}
-                          </span>
-                        )}
+                  )
+                }
+
+                const c = filtered[virtualItem.index]
+                const assignee = customerAssignee(c)
+                const status = customerStatus(c)
+                const cust = customerById.get(c.customerId)
+
+                return (
+                  <div
+                    key={c.id}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    <button
+                      onClick={() => setSelected(c.id)}
+                      className={`w-full text-left px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                        selected === c.id ? 'bg-green-50' : ''
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-10 h-10 rounded-full flex-shrink-0 overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm">
+                          {cust?.profilePicUrl ? (
+                            <img src={cust.profilePicUrl} alt="" className="w-full h-full object-cover" />
+                          ) : cust?.isGroup ? (
+                            <span className="text-base">👥</span>
+                          ) : (
+                            customerName(c)[0]?.toUpperCase()
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-sm text-gray-800 truncate">{customerName(c)}</span>
+                            <span className="text-xs text-gray-400 flex-shrink-0">
+                              {formatConversationTime(c.updatedAt)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between mt-0.5 gap-2">
+                            <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
+                            {c.unreadCount > 0 && (
+                              <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
+                                {c.unreadCount}
+                              </span>
+                            )}
+                          </div>
+                          {(assignee || status) && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {status && (
+                                <span
+                                  className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
+                                  title={`Status: ${statusLabel(status)}`}
+                                >
+                                  {statusLabel(status)}
+                                </span>
+                              )}
+                              {assignee && (
+                                <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
+                                  {assignee}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
+                    </button>
                   </div>
-                </div>
-              </button>
-            )
-          })}
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
 
