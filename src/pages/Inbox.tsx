@@ -58,6 +58,7 @@ function statusColor(status: string): string {
 }
 
 export default function Inbox() {
+  const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS)
   const {
     conversations,
     isLoading: loading,
@@ -75,7 +76,6 @@ export default function Inbox() {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [search, setSearch] = useState('')
-  const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [optimistic, setOptimistic] = useState<Message[]>([])
   const [clearConfirm, setClearConfirm] = useState(false)
