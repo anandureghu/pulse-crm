@@ -87,7 +87,6 @@ export async function sendMessageFn(body: {
     status: 'sent',
     timestamp: new Date().toISOString(),
     organization_id: scope.organizationId,
-    instance_id: scope.instanceId,
   }, { onConflict: 'id', ignoreDuplicates: true })
 
   await supabase.from('conversations').update({
@@ -96,6 +95,24 @@ export async function sendMessageFn(body: {
   }).eq('id', body.conversationId)
 
   return { ok: true, messageId: evoMsgId }
+}
+
+// ── Upload a local file to Supabase storage ───────────────────────────────────
+
+export async function uploadMediaFile(file: File): Promise<string | null> {
+  try {
+    const ext = file.name.split('.').pop() ?? 'bin'
+    const path = `agent-uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const { error } = await supabase.storage
+      .from('whatsapp-media')
+      .upload(path, file, { contentType: file.type, upsert: false })
+    if (error) { console.error('Upload error:', error); return null }
+    const { data: { publicUrl } } = supabase.storage.from('whatsapp-media').getPublicUrl(path)
+    return publicUrl
+  } catch (e) {
+    console.error('uploadMediaFile error:', e)
+    return null
+  }
 }
 
 // ── Fetch media from Evolution API as base64 ─────────────────────────────────
@@ -173,7 +190,7 @@ export async function assignEnquiryFn(body: { enquiryId: string; assignTo: strin
       : 'Enquiry unassigned',
     created_by: await currentUser(),
     ...(scope
-      ? { organization_id: scope.organizationId, instance_id: scope.instanceId }
+      ? { organization_id: scope.organizationId }
       : {}),
   })
 
@@ -196,7 +213,7 @@ export async function updateEnquiryStatusFn(body: { enquiryId: string; status: s
     description: `Status changed to ${body.status.replace(/_/g, ' ')}`,
     created_by: await currentUser(),
     ...(scope
-      ? { organization_id: scope.organizationId, instance_id: scope.instanceId }
+      ? { organization_id: scope.organizationId }
       : {}),
   })
 

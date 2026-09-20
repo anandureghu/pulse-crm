@@ -5,23 +5,22 @@ import type { Conversation, Message } from '../types'
 
 export function useConversations() {
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!organizationId || !instanceId) {
+    if (!organizationId) {
       setConversations([])
       setLoading(false)
       return
     }
     setLoading(true)
-    const unsub = subscribeToConversations({ organizationId, instanceId }, (convs) => {
+    const unsub = subscribeToConversations({ organizationId }, (convs) => {
       setConversations(convs)
       setLoading(false)
     })
     return unsub
-  }, [organizationId, instanceId])
+  }, [organizationId])
 
   return { conversations, loading }
 }

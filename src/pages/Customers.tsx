@@ -47,11 +47,11 @@ export default function Customers() {
       toast('Enter a name and a valid 10-digit Indian mobile (with or without +91)', 'error')
       return
     }
-    if (!organizationId || !instanceId) {
-      toast('Select an organization and instance first', 'error')
+    if (!organizationId) {
+      toast('Select an organization first', 'error')
       return
     }
-    const scope = { organizationId, instanceId }
+    const scope = { organizationId }
     setSaving(true)
     try {
       const existing = customers.find((c) => normalizePhoneForStorage(c.phone) === phoneNorm)
@@ -68,6 +68,7 @@ export default function Customers() {
         assignedTo: null,
         tags: [],
         aiAutoreply: false,
+        isGroup: false,
       })
       const convId = await ensureConversation(scope, created.id)
       toast('Contact added', 'success')

@@ -5,7 +5,6 @@ import { useTenantStore } from '../store/tenantStore'
 export function useCreateFollowup() {
   const user = useAuthStore((s) => s.user)
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
 
   const create = (
     enquiryId: string,
@@ -13,11 +12,11 @@ export function useCreateFollowup() {
     dueDate: Date,
     assignedTo?: string
   ) => {
-    if (!organizationId || !instanceId) {
-      return Promise.resolve({ error: new Error('No active instance') })
+    if (!organizationId) {
+      return Promise.resolve({ error: new Error('No active organization') })
     }
     return createFollowup(
-      { organizationId, instanceId },
+      { organizationId },
       {
         enquiryId,
         note,

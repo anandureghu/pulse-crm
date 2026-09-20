@@ -101,6 +101,7 @@ function messageType(data: EvolutionWebhookMessage['data']): string {
   const msg = data.message
   if (!msg) return 'text'
   if (msg.imageMessage) return 'image'
+  if (msg.stickerMessage) return 'sticker'
   if (msg.audioMessage) return 'audio'
   if (msg.videoMessage) return 'video'
   if (msg.documentMessage) return 'document'
@@ -121,6 +122,28 @@ async function evoCfgFromInstance(
   const apiKey = global.apiKey || evo.apiKey
   if (!apiUrl || !apiKey) return null
   return { apiUrl, apiKey, activeInstance }
+}
+
+async function fetchProfilePicUrl(
+  cfg: { apiUrl: string; apiKey: string; activeInstance: string },
+  jid: string,
+): Promise<string | null> {
+  try {
+    const base = cfg.apiUrl.replace(/\/$/, '')
+    const res = await fetch(
+      `${base}/chat/fetchProfilePictureUrl/${cfg.activeInstance}`,
+      {
+        method: 'POST',
+        headers: { apikey: cfg.apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: jid }),
+      },
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    return (data.profilePictureUrl as string | undefined) ?? null
+  } catch {
+    return null
+  }
 }
 
 async function storeMedia(
@@ -186,11 +209,19 @@ async function handleMessageUpsert(
   const { data } = payload
   const remoteJid = data.key.remoteJid ?? ''
 
-  if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) return
+  if (remoteJid.includes('@broadcast')) return
 
+  const isGroup = remoteJid.includes('@g.us')
   const fromMe = Boolean(data.key.fromMe)
-  const phone = phoneFromJid(remoteJid)
-  if (!phone || phone.length < 8) return
+
+  // For groups use the full JID as the unique identifier; for 1-1 chats normalise to phone digits
+  const phone = isGroup ? remoteJid : phoneFromJid(remoteJid)
+  if (!isGroup && (!phone || phone.length < 8)) return
+
+  // Who actually sent the message inside a group (participant JID → display name)
+  const senderName = isGroup
+    ? (data.pushName ?? (data.key.participant ? phoneFromJid(data.key.participant) : null) ?? null)
+    : null
 
   const text = extractText(data)
   const type = messageType(data)
@@ -199,7 +230,6 @@ async function handleMessageUpsert(
   if (!messageId) return
 
   const orgId = tenant.organization_id
-  const instanceId = tenant.id
 
   let media: string | null = null
   if (type !== 'text') {
@@ -211,6 +241,7 @@ async function handleMessageUpsert(
       const msg = data.message
       media =
         msg?.imageMessage?.url ??
+        msg?.stickerMessage?.url ??
         msg?.audioMessage?.url ??
         msg?.videoMessage?.url ??
         msg?.documentMessage?.url ??
@@ -220,8 +251,8 @@ async function handleMessageUpsert(
 
   const { data: existingCustomer } = await supabase
     .from('customers')
-    .select('id, name')
-    .eq('instance_id', instanceId)
+    .select('id, name, profile_pic_url')
+    .eq('organization_id', orgId)
     .eq('phone', phone)
     .maybeSingle()
 
@@ -230,20 +261,40 @@ async function handleMessageUpsert(
 
   if (existingCustomer) {
     customerId = existingCustomer.id
-    if (!fromMe && data.pushName && existingCustomer.name === phone) {
+    // Update name from pushName when: 1-1 chat and the stored name is still the raw phone/jid
+    if (!fromMe && !isGroup && data.pushName && existingCustomer.name === phone) {
       await supabase.from('customers').update({ name: data.pushName }).eq('id', customerId)
+    }
+    // Lazy-fetch profile pic if we don't have one yet
+    if (!existingCustomer.profile_pic_url) {
+      const cfg = await evoCfgFromInstance(supabase, tenant)
+      if (cfg) {
+        const picUrl = await fetchProfilePicUrl(cfg, remoteJid)
+        if (picUrl) {
+          await supabase.from('customers').update({ profile_pic_url: picUrl }).eq('id', customerId)
+        }
+      }
     }
   } else {
     isNewCustomer = true
+    // Groups: use the JID as initial name (users can rename from the CRM)
+    // 1-1: use pushName if available, else phone
+    const name = isGroup ? phone : (data.pushName ?? phone)
+    let newProfilePicUrl: string | null = null
+    const cfgForPic = await evoCfgFromInstance(supabase, tenant)
+    if (cfgForPic) {
+      newProfilePicUrl = await fetchProfilePicUrl(cfgForPic, remoteJid)
+    }
     const { data: newCustomer, error } = await supabase
       .from('customers')
       .insert({
         phone,
-        name: data.pushName ?? phone,
+        name,
         assigned_to: null,
         tags: [],
+        is_group: isGroup,
+        profile_pic_url: newProfilePicUrl,
         organization_id: orgId,
-        instance_id: instanceId,
       })
       .select('id')
       .single()
@@ -254,7 +305,7 @@ async function handleMessageUpsert(
   const { data: existingConv } = await supabase
     .from('conversations')
     .select('id')
-    .eq('instance_id', instanceId)
+    .eq('organization_id', orgId)
     .eq('customer_id', customerId)
     .maybeSingle()
 
@@ -284,7 +335,6 @@ async function handleMessageUpsert(
         unread_count: fromMe ? 0 : 1,
         updated_at: timestamp,
         organization_id: orgId,
-        instance_id: instanceId,
       })
       .select('id')
       .single()
@@ -297,18 +347,20 @@ async function handleMessageUpsert(
       id: messageId,
       conversation_id: conversationId,
       sender,
+      sender_name: senderName,
       type,
       text,
       media,
       status: fromMe ? 'sent' : 'delivered',
       timestamp,
       organization_id: orgId,
-      instance_id: instanceId,
     },
     { onConflict: 'id', ignoreDuplicates: true },
   )
 
   if (fromMe) return
+  // Groups don't create enquiries — they're not individual leads
+  if (isGroup) return
 
   const activityDesc = text
     ? `Customer sent message: "${text.slice(0, 100)}"`
@@ -324,7 +376,6 @@ async function handleMessageUpsert(
         assigned_to: null,
         value: 0,
         organization_id: orgId,
-        instance_id: instanceId,
       })
       .select('id')
       .single()
@@ -335,7 +386,6 @@ async function handleMessageUpsert(
         description: activityDesc,
         created_by: 'system',
         organization_id: orgId,
-        instance_id: instanceId,
       })
     }
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
@@ -353,7 +403,7 @@ async function handleMessageUpsert(
     const { data: enq } = await supabase
       .from('enquiries')
       .select('id')
-      .eq('instance_id', instanceId)
+      .eq('organization_id', orgId)
       .eq('customer_id', customerId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -365,7 +415,6 @@ async function handleMessageUpsert(
         description: activityDesc,
         created_by: 'system',
         organization_id: orgId,
-        instance_id: instanceId,
       })
     }
   }
@@ -388,5 +437,4 @@ async function handleMessageStatus(
     .from('messages')
     .update({ status })
     .eq('id', payload.data.key.id)
-    .eq('instance_id', tenant.id)
 }

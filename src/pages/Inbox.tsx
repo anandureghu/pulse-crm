@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { supabase } from '../lib/supabase'
-import { useConversations, useMessages } from '../hooks/useConversations'
+import { useMessages } from '../hooks/useConversations'
+import { useInfiniteConversations } from '../hooks/useInfiniteConversations'
 import { useCustomers } from '../hooks/useCustomers'
 import { useEnquiries } from '../hooks/useEnquiries'
 import { useUsers } from '../hooks/useUsers'
 import { useAuthStore } from '../store/authStore'
-import { sendMessageFn, assignEnquiryFn } from '../lib/functions'
+import { sendMessageFn, assignEnquiryFn, uploadMediaFile } from '../lib/functions'
 import { starMessage, clearConversationMessages, userLabel } from '../lib/db'
 import { formatPhoneDisplay, telHref } from '../lib/phone'
 import {
@@ -15,11 +17,9 @@ import {
   countActiveInboxFilters,
   DEFAULT_INBOX_FILTERS,
   inboxFilterSummaries,
-  matchesActivity,
   matchesAssignee,
   matchesStatus,
   matchesTag,
-  matchesUnread,
   type InboxFilters,
 } from '../lib/inboxFilters'
 import { formatConversationTime } from '../lib/datetime'
@@ -58,7 +58,14 @@ function statusColor(status: string): string {
 }
 
 export default function Inbox() {
-  const { conversations, loading } = useConversations()
+  const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS)
+  const {
+    conversations,
+    isLoading: loading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteConversations(filters)
   const { customers } = useCustomers()
   const { enquiries } = useEnquiries()
   const users = useUsers()
@@ -69,7 +76,6 @@ export default function Inbox() {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [search, setSearch] = useState('')
-  const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [optimistic, setOptimistic] = useState<Message[]>([])
   const [clearConfirm, setClearConfirm] = useState(false)
@@ -81,6 +87,15 @@ export default function Inbox() {
   const actionsRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const slashKeyRef = useRef<((e: React.KeyboardEvent) => boolean) | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordingStreamRef = useRef<MediaStream | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
 
   const messages = useMessages(selected)
   const conv = conversations.find((c) => c.id === selected)
@@ -112,6 +127,7 @@ export default function Inbox() {
   useEffect(() => {
     setAiSuggestion(null)
     setActionsOpen(false)
+    setPendingFiles([])
   }, [selected])
 
   // Deep-link from "Add customer" → open that conversation
@@ -130,6 +146,22 @@ export default function Inbox() {
       supabase.from('conversations').update({ unread_count: 0 }).eq('id', selected).then(() => {})
     }
   }, [selected, conversations])
+
+  // Infinite scroll sentinel
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage()
+        }
+      },
+      { threshold: 0.1 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
   useEffect(() => {
     if (!actionsOpen) return
@@ -182,10 +214,9 @@ export default function Inbox() {
 
   const matchesFilters = (c: Conversation) => {
     const customer = customerById.get(c.customerId)
-    if (!matchesUnread(c, filters.unread)) return false
+    // unread + activity are handled server-side in fetchConversationsPage
     if (!matchesAssignee(customerAssignee(c), filters.assignee, meLabel)) return false
     if (!matchesStatus(customerStatus(c), filters.status)) return false
-    if (!matchesActivity(c.updatedAt, filters.activity)) return false
     if (!matchesTag(customer, filters.tag)) return false
     return true
   }
@@ -206,6 +237,14 @@ export default function Inbox() {
       || status.includes(q)
       || tags.includes(q)
     )
+  })
+
+  // Virtual list — only renders ~15 visible rows regardless of total loaded
+  const virtualizer = useVirtualizer({
+    count: filtered.length + (hasNextPage || isFetchingNextPage ? 1 : 0),
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 72,
+    overscan: 5,
   })
 
   const clearFilterKey = (key: keyof InboxFilters) => {
@@ -237,34 +276,131 @@ export default function Inbox() {
   }, [allMessages.length])
 
   const handleSend = async () => {
-    if (!text.trim() || !selected || sending || !conv) return
+    if (!selected || sending || !conv) return
     if (parseSlashInput(text).open) return
+    const hasText = !!text.trim()
+    const hasFiles = pendingFiles.length > 0
+    if (!hasText && !hasFiles) return
+
     const msgText = text.trim()
+    const filesToSend = [...pendingFiles]
     setSending(true)
     setText('')
-
-    const tmpMsg: Message = {
-      id: `tmp-${Date.now()}`,
-      organizationId: conv.organizationId,
-      instanceId: conv.instanceId,
-      conversationId: selected,
-      sender: 'agent',
-      type: 'text',
-      text: msgText,
-      status: 'sent',
-      timestamp: new Date().toISOString(),
-    }
-    setOptimistic((prev) => [...prev, tmpMsg])
+    setPendingFiles([])
 
     try {
-      await sendMessageFn({ conversationId: selected, text: msgText })
-    } catch {
-      setOptimistic((prev) => prev.filter((m) => m.id !== tmpMsg.id))
-      setText(msgText)
-      toast('Failed to send message', 'error')
+      for (const file of filesToSend) {
+        const mediaType = detectMediaType(file)
+        const previewUrl = URL.createObjectURL(file)
+        const tmpId = `tmp-${Date.now()}-${Math.random()}`
+        const tmpMsg: Message = {
+          id: tmpId,
+          organizationId: conv.organizationId,
+          conversationId: selected,
+          sender: 'agent',
+          type: mediaType,
+          text: '',
+          media: previewUrl,
+          status: 'sent',
+          timestamp: new Date().toISOString(),
+        }
+        setOptimistic((prev) => [...prev, tmpMsg])
+        const mediaUrl = await uploadMediaFile(file)
+        if (!mediaUrl) {
+          setOptimistic((prev) => prev.filter((m) => m.id !== tmpId))
+          toast(`Failed to upload ${file.name}`, 'error')
+          continue
+        }
+        await sendMessageFn({ conversationId: selected, mediaUrl, mediaType })
+        setOptimistic((prev) => prev.filter((m) => m.id !== tmpId))
+      }
+
+      if (hasText) {
+        const tmpMsg: Message = {
+          id: `tmp-${Date.now()}`,
+          organizationId: conv.organizationId,
+          conversationId: selected,
+          sender: 'agent',
+          type: 'text',
+          text: msgText,
+          status: 'sent',
+          timestamp: new Date().toISOString(),
+        }
+        setOptimistic((prev) => [...prev, tmpMsg])
+        try {
+          await sendMessageFn({ conversationId: selected, text: msgText })
+        } catch {
+          setOptimistic((prev) => prev.filter((m) => m.id !== tmpMsg.id))
+          setText(msgText)
+          toast('Failed to send message', 'error')
+        }
+      }
     } finally {
       setSending(false)
     }
+  }
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData.files)
+    if (files.length > 0) {
+      e.preventDefault()
+      setPendingFiles((prev) => [...prev, ...files])
+    }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files])
+    e.target.value = ''
+  }
+
+  useEffect(() => {
+    if (!isRecording) return
+    const id = setInterval(() => setRecordingSeconds((s) => s + 1), 1000)
+    return () => clearInterval(id)
+  }, [isRecording])
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      recordingStreamRef.current = stream
+      const mimeType =
+        MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
+        : 'audio/webm'
+      const mr = new MediaRecorder(stream, { mimeType })
+      chunksRef.current = []
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      mr.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType })
+        const ext = mr.mimeType.includes('ogg') ? 'ogg' : 'webm'
+        const file = new File([blob], `voice-message.${ext}`, { type: mr.mimeType })
+        setPendingFiles((prev) => [...prev, file])
+        setIsRecording(false)
+        setRecordingSeconds(0)
+      }
+      mr.start()
+      mediaRecorderRef.current = mr
+      setIsRecording(true)
+      setRecordingSeconds(0)
+    } catch {
+      toast('Microphone access denied', 'error')
+    }
+  }
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop()
+  }
+
+  const cancelRecording = () => {
+    const mr = mediaRecorderRef.current
+    if (!mr) return
+    mr.onstop = null
+    mr.stop()
+    recordingStreamRef.current?.getTracks().forEach((t) => t.stop())
+    setIsRecording(false)
+    setRecordingSeconds(0)
   }
 
   const handleSendProduct = async (product: SendableProduct) => {
@@ -277,7 +413,6 @@ export default function Inbox() {
     const tmpMsg: Message = {
       id: `tmp-${Date.now()}`,
       organizationId: conv.organizationId,
-      instanceId: conv.instanceId,
       conversationId: selected,
       sender: 'agent',
       type: mediaUrl ? 'image' : 'text',
@@ -471,60 +606,111 @@ export default function Inbox() {
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-auto">
+        <div ref={listRef} className="flex-1 overflow-auto">
           {loading && <p className="text-sm text-gray-400 p-4">Loading…</p>}
           {!loading && filtered.length === 0 && (
             <p className="text-sm text-gray-400 p-4">
               {search || activeFilterCount > 0 ? 'No matches.' : 'No conversations yet.'}
             </p>
           )}
-          {filtered.map((c) => {
-            const assignee = customerAssignee(c)
-            const status = customerStatus(c)
-            return (
-              <button
-                key={c.id}
-                onClick={() => setSelected(c.id)}
-                className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
-                  selected === c.id ? 'bg-green-50' : ''
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-sm text-gray-800 truncate">
-                    {customerName(c)}
-                  </span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">
-                    {formatConversationTime(c.updatedAt)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between mt-1 gap-2">
-                  <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
-                  {c.unreadCount > 0 && (
-                    <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
-                      {c.unreadCount}
-                    </span>
-                  )}
-                </div>
-                {(assignee || status) && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {status && (
-                      <span
-                        className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
-                        title={`Status: ${statusLabel(status)}`}
-                      >
-                        {statusLabel(status)}
-                      </span>
-                    )}
-                    {assignee && (
-                      <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
-                        {assignee}
-                      </span>
-                    )}
+          {!loading && filtered.length > 0 && (
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+              {virtualizer.getVirtualItems().map((virtualItem) => {
+                // Last slot = sentinel / loading spinner
+                if (virtualItem.index === filtered.length) {
+                  return (
+                    <div
+                      key="sentinel"
+                      ref={sentinelRef}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualItem.start}px)`,
+                        height: `${virtualItem.size}px`,
+                      }}
+                      className="flex items-center justify-center py-3"
+                    >
+                      {isFetchingNextPage && (
+                        <span className="text-xs text-gray-400">Loading more…</span>
+                      )}
+                    </div>
+                  )
+                }
+
+                const c = filtered[virtualItem.index]
+                const assignee = customerAssignee(c)
+                const status = customerStatus(c)
+                const cust = customerById.get(c.customerId)
+
+                return (
+                  <div
+                    key={c.id}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    <button
+                      onClick={() => setSelected(c.id)}
+                      className={`w-full text-left px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                        selected === c.id ? 'bg-green-50' : ''
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-10 h-10 rounded-full flex-shrink-0 overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm">
+                          {cust?.profilePicUrl ? (
+                            <img src={cust.profilePicUrl} alt="" className="w-full h-full object-cover" />
+                          ) : cust?.isGroup ? (
+                            <span className="text-base">👥</span>
+                          ) : (
+                            customerName(c)[0]?.toUpperCase()
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-sm text-gray-800 truncate">{customerName(c)}</span>
+                            <span className="text-xs text-gray-400 flex-shrink-0">
+                              {formatConversationTime(c.updatedAt)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between mt-0.5 gap-2">
+                            <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
+                            {c.unreadCount > 0 && (
+                              <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
+                                {c.unreadCount}
+                              </span>
+                            )}
+                          </div>
+                          {(assignee || status) && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {status && (
+                                <span
+                                  className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
+                                  title={`Status: ${statusLabel(status)}`}
+                                >
+                                  {statusLabel(status)}
+                                </span>
+                              )}
+                              {assignee && (
+                                <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
+                                  {assignee}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </button>
                   </div>
-                )}
-              </button>
-            )
-          })}
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -541,8 +727,14 @@ export default function Inbox() {
                   <path d="M13 16l-6-6 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </button>
-              <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0">
-                {customerName(conv)[0]?.toUpperCase()}
+              <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm flex-shrink-0 overflow-hidden">
+                {selectedCustomer?.profilePicUrl ? (
+                  <img src={selectedCustomer.profilePicUrl} alt="" className="w-full h-full object-cover" />
+                ) : selectedCustomer?.isGroup ? (
+                  <span className="text-base">👥</span>
+                ) : (
+                  customerName(conv)[0]?.toUpperCase()
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-sm text-gray-800 truncate">{customerName(conv)}</p>
@@ -677,6 +869,7 @@ export default function Inbox() {
                   key={msg.id}
                   msg={msg}
                   customerPhone={selectedCustomer?.phone}
+                  isGroup={selectedCustomer?.isGroup}
                   onStar={msg.id.startsWith('tmp-') ? undefined : handleStar}
                 />
               ))}
@@ -725,36 +918,97 @@ export default function Inbox() {
                 onSendProduct={handleSendProduct}
                 onKeyIntercept={(handler) => { slashKeyRef.current = handler }}
               />
-              <div className="flex gap-2 items-end">
-                <button
-                  onClick={handleAiSuggest}
-                  disabled={aiLoading}
-                  title="Get AI suggested reply"
-                  className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
-                >
-                  {aiLoading ? (
-                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                    </svg>
-                  ) : '✨'}
-                </button>
-                <textarea
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a message…  /products  /reply"
-                  rows={1}
-                  className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!text.trim() || sending || parseSlashInput(text).open}
-                  className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
-                >
-                  ➤
-                </button>
-              </div>
+              {pendingFiles.length > 0 && (
+                <div className="flex gap-2 flex-wrap mb-2 p-2 bg-gray-50 rounded-xl">
+                  {pendingFiles.map((f, i) => (
+                    <PendingFilePreview
+                      key={i}
+                      file={f}
+                      onRemove={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
+                    />
+                  ))}
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xlsx,.xls,.csv,.txt"
+                onChange={handleFileChange}
+              />
+              {isRecording ? (
+                <div className="flex items-center gap-3 h-10">
+                  <button
+                    onClick={cancelRecording}
+                    title="Cancel recording"
+                    className="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-base"
+                  >
+                    ✕
+                  </button>
+                  <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-2xl">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                    <span className="text-sm font-mono text-red-600">{fmtRecordingTime(recordingSeconds)}</span>
+                    <span className="text-xs text-red-400">Recording…</span>
+                  </div>
+                  <button
+                    onClick={stopRecording}
+                    title="Stop and attach"
+                    className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 flex-shrink-0 text-base"
+                  >
+                    ✓
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2 items-end">
+                  <button
+                    onClick={handleAiSuggest}
+                    disabled={aiLoading}
+                    title="Get AI suggested reply"
+                    className="text-purple-500 hover:text-purple-700 hover:bg-purple-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
+                  >
+                    {aiLoading ? (
+                      <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                      </svg>
+                    ) : '✨'}
+                  </button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach file"
+                    className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-lg"
+                  >
+                    📎
+                  </button>
+                  <textarea
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    placeholder="Type a message…  /products  /reply"
+                    rows={1}
+                    className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                  />
+                  {!text.trim() && pendingFiles.length === 0 ? (
+                    <button
+                      onClick={startRecording}
+                      title="Record voice message"
+                      className="text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 transition-colors text-lg"
+                    >
+                      🎤
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSend}
+                      disabled={sending || parseSlashInput(text).open}
+                      className="bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 disabled:opacity-40 flex-shrink-0"
+                    >
+                      ➤
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -784,6 +1038,66 @@ export default function Inbox() {
           setFiltersOpen(false)
         }}
       />
+    </div>
+  )
+}
+
+function fmtRecordingTime(s: number): string {
+  const m = Math.floor(s / 60)
+  const sec = s % 60
+  return `${m}:${sec.toString().padStart(2, '0')}`
+}
+
+function detectMediaType(file: File): 'image' | 'video' | 'audio' | 'document' {
+  if (file.type.startsWith('image/')) return 'image'
+  if (file.type.startsWith('video/')) return 'video'
+  if (file.type.startsWith('audio/')) return 'audio'
+  return 'document'
+}
+
+function PendingFilePreview({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file)
+    setObjectUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
+  const isImage = file.type.startsWith('image/')
+  const isAudio = file.type.startsWith('audio/')
+
+  if (isAudio && objectUrl) {
+    return (
+      <div className="relative flex items-center gap-2 bg-gray-100 border border-gray-200 rounded-xl px-3 py-2 pr-6 max-w-[220px]">
+        <span className="text-lg flex-shrink-0">🎤</span>
+        <audio controls src={objectUrl} className="h-7 w-32" />
+        <button
+          onClick={onRemove}
+          className="absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] leading-none"
+        >
+          ✕
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative flex-shrink-0">
+      {isImage && objectUrl ? (
+        <img src={objectUrl} alt={file.name} className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
+      ) : (
+        <div className="w-16 h-16 rounded-lg border border-gray-200 bg-gray-100 flex flex-col items-center justify-center p-1 gap-0.5">
+          <span className="text-xl leading-none">📄</span>
+          <span className="text-[9px] text-gray-500 truncate w-full text-center leading-tight">{file.name}</span>
+        </div>
+      )}
+      <button
+        onClick={onRemove}
+        className="absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] leading-none"
+      >
+        ✕
+      </button>
     </div>
   )
 }

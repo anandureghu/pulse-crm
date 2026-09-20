@@ -5,7 +5,7 @@ import type { TenantScope } from './tenant'
 type Unsubscribe = () => void
 
 function tenantCols(scope: TenantScope) {
-  return { organization_id: scope.organizationId, instance_id: scope.instanceId }
+  return { organization_id: scope.organizationId }
 }
 
 // ── camelCase ↔ snake_case mapping ───────────────────────────────────────────
@@ -34,7 +34,7 @@ export async function getCustomerByPhone(scope: TenantScope, phone: string): Pro
   const { data } = await supabase
     .from('customers')
     .select('*')
-    .eq('instance_id', scope.instanceId)
+    .eq('organization_id', scope.organizationId)
     .eq('phone', phone)
     .limit(1)
     .maybeSingle()
@@ -43,7 +43,7 @@ export async function getCustomerByPhone(scope: TenantScope, phone: string): Pro
 
 export async function createCustomer(
   scope: TenantScope,
-  data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'organizationId' | 'instanceId'>
+  data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'organizationId'>
 ): Promise<Customer> {
   const { data: row, error } = await supabase
     .from('customers')
@@ -58,7 +58,7 @@ export async function ensureConversation(scope: TenantScope, customerId: string)
   const { data: existing } = await supabase
     .from('conversations')
     .select('id')
-    .eq('instance_id', scope.instanceId)
+    .eq('organization_id', scope.organizationId)
     .eq('customer_id', customerId)
     .maybeSingle()
   if (existing?.id) return existing.id as string
@@ -91,13 +91,11 @@ export function subscribeToCustomers(
         .from('customers')
         .select('*')
         .eq('organization_id', scope.organizationId)
-        .eq('instance_id', scope.instanceId)
         .order('created_at', { ascending: false }),
       supabase
         .from('enquiries')
         .select('customer_id, assigned_to, created_at')
         .eq('organization_id', scope.organizationId)
-        .eq('instance_id', scope.instanceId)
         .order('created_at', { ascending: false }),
     ])
 
@@ -141,7 +139,7 @@ export async function getCustomer(id: string): Promise<Customer | null> {
 
 export async function createEnquiry(
   scope: TenantScope,
-  data: Omit<Enquiry, 'id' | 'createdAt' | 'organizationId' | 'instanceId'>
+  data: Omit<Enquiry, 'id' | 'createdAt' | 'organizationId'>
 ): Promise<{ data: Enquiry | null; error: Error | null }> {
   const { data: row, error } = await supabase
     .from('enquiries')
@@ -161,7 +159,7 @@ export async function ensureEnquiryForCustomer(
   const { data: existing } = await supabase
     .from('enquiries')
     .select('*')
-    .eq('instance_id', scope.instanceId)
+    .eq('organization_id', scope.organizationId)
     .eq('customer_id', customerId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -190,14 +188,13 @@ export function subscribeToEnquiries(
       .from('enquiries')
       .select('*')
       .eq('organization_id', scope.organizationId)
-      .eq('instance_id', scope.instanceId)
       .order('created_at', { ascending: false })
       .then(({ data }) => onData((data ?? []).map(fromRow<Enquiry>)))
 
   fetch()
 
   const channel = supabase
-    .channel(`enquiries:${scope.instanceId}:${crypto.randomUUID()}`)
+    .channel(`enquiries:${scope.organizationId}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, fetch)
     .subscribe()
 
@@ -249,7 +246,7 @@ export async function getConversationByCustomer(customerId: string): Promise<Con
 
 export async function createConversation(
   scope: TenantScope,
-  data: Omit<Conversation, 'id' | 'updatedAt' | 'organizationId' | 'instanceId'>
+  data: Omit<Conversation, 'id' | 'updatedAt' | 'organizationId'>
 ) {
   return supabase.from('conversations').insert({
     ...toRow(data as Record<string, unknown>),
@@ -270,7 +267,6 @@ export function subscribeToConversations(
       .from('conversations')
       .select('*')
       .eq('organization_id', scope.organizationId)
-      .eq('instance_id', scope.instanceId)
       .order('updated_at', { ascending: false })
 
     const convRows = rows ?? []
@@ -308,8 +304,83 @@ export function subscribeToConversations(
 
   // Unique channel name — Layout + Inbox both subscribe; reusing 'conversations' breaks after subscribe()
   const channel = supabase
-    .channel(`conversations:${scope.instanceId}:${crypto.randomUUID()}`)
+    .channel(`conversations:${scope.organizationId}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, fetch)
+    .subscribe()
+
+  return () => { supabase.removeChannel(channel) }
+}
+
+export interface ConversationPageParams {
+  organizationId: string
+  cursor?: { updatedAt: string; id: string }
+  limit?: number
+  unread?: 'all' | 'unread' | 'read'
+  activity?: 'all' | 'today' | '7d' | 'stale'
+}
+
+export async function fetchConversationsPage(params: ConversationPageParams): Promise<Conversation[]> {
+  const { organizationId, cursor, limit = 50, unread = 'all', activity = 'all' } = params
+
+  let query = supabase
+    .from('conversations')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .order('updated_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(limit)
+
+  // Cursor: fetch rows older than the last seen item
+  if (cursor) {
+    query = query.or(
+      `updated_at.lt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.lt.${cursor.id})`
+    )
+  }
+
+  // Server-side unread filter (column lives on conversations)
+  if (unread === 'unread') query = query.gt('unread_count', 0)
+  if (unread === 'read') query = query.eq('unread_count', 0)
+
+  // Server-side activity filter (updated_at lives on conversations)
+  if (activity !== 'all') {
+    const now = new Date()
+    if (activity === 'today') {
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+      query = query.gte('updated_at', startOfDay)
+    } else if (activity === '7d') {
+      const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+      query = query.gte('updated_at', since)
+    } else if (activity === 'stale') {
+      const before = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString()
+      query = query.lte('updated_at', before)
+    }
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map((row) => fromRow<Conversation>(row as Record<string, unknown>))
+}
+
+export function subscribeToConversationEvents(
+  organizationId: string,
+  onEvent: (event: 'INSERT' | 'UPDATE', conversation: Conversation) => void
+): Unsubscribe {
+  const channel = supabase
+    .channel(`conv-events:${organizationId}:${crypto.randomUUID()}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'conversations',
+        filter: `organization_id=eq.${organizationId}`,
+      },
+      (payload) => {
+        if (payload.eventType !== 'INSERT' && payload.eventType !== 'UPDATE') return
+        const conv = fromRow<Conversation>(payload.new as Record<string, unknown>)
+        onEvent(payload.eventType, conv)
+      }
+    )
     .subscribe()
 
   return () => { supabase.removeChannel(channel) }
@@ -345,7 +416,7 @@ export function subscribeToMessages(
 
 export async function addMessage(
   scope: TenantScope,
-  data: Omit<Message, 'id' | 'organizationId' | 'instanceId'> & { id: string }
+  data: Omit<Message, 'id' | 'organizationId'> & { id: string }
 ) {
   return supabase.from('messages').insert({
     ...toRow(data as Record<string, unknown>),
@@ -422,7 +493,7 @@ export function subscribeToNotes(enquiryId: string, onData: (notes: Note[]) => v
 
 export async function addNote(
   scope: TenantScope,
-  data: Omit<Note, 'id' | 'createdAt' | 'organizationId' | 'instanceId'>
+  data: Omit<Note, 'id' | 'createdAt' | 'organizationId'>
 ) {
   return supabase.from('notes').insert({
     ...toRow(data as Record<string, unknown>),
@@ -489,7 +560,7 @@ export function subscribeToActivities(
 
 export async function logActivity(
   scope: TenantScope,
-  data: Omit<Activity, 'id' | 'createdAt' | 'organizationId' | 'instanceId'>
+  data: Omit<Activity, 'id' | 'createdAt' | 'organizationId'>
 ) {
   return supabase.from('activities').insert({
     ...toRow(data as Record<string, unknown>),
@@ -545,7 +616,6 @@ export function subscribeToAllFollowups(
       .from('followups')
       .select('*')
       .eq('organization_id', scope.organizationId)
-      .eq('instance_id', scope.instanceId)
       .order('due_date', { ascending: true })
       .then(({ data }) => {
         onData(sortFollowups((data ?? []).map(fromRow<Followup>)))
@@ -554,7 +624,7 @@ export function subscribeToAllFollowups(
   fetch()
 
   const channel = supabase
-    .channel(`followups:${scope.instanceId}:${crypto.randomUUID()}`)
+    .channel(`followups:${scope.organizationId}:${crypto.randomUUID()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'followups' }, fetch)
     .subscribe()
 
@@ -632,7 +702,7 @@ export async function enrichFollowups(followups: Followup[]): Promise<EnrichedFo
 
 export async function createFollowup(
   scope: TenantScope,
-  data: Omit<Followup, 'id' | 'completedAt' | 'createdAt' | 'organizationId' | 'instanceId'>
+  data: Omit<Followup, 'id' | 'completedAt' | 'createdAt' | 'organizationId'>
 ) {
   return supabase.from('followups').insert({
     ...toRow(data as Record<string, unknown>),

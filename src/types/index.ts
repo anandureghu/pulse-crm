@@ -19,12 +19,13 @@ export type EnquiryStatus =
 export interface Customer {
   id: string
   organizationId: string
-  instanceId: string
   phone: string
   name: string
   assignedTo: string | null
   tags: string[]
   aiAutoreply: boolean
+  isGroup: boolean
+  profilePicUrl?: string | null
   email?: string | null
   shopifyCustomerId?: string | null
   createdAt: string
@@ -34,7 +35,6 @@ export interface Customer {
 export interface Enquiry {
   id: string
   organizationId: string
-  instanceId: string
   customerId: string
   status: EnquiryStatus
   stage: string
@@ -46,7 +46,6 @@ export interface Enquiry {
 export interface Conversation {
   id: string
   organizationId: string
-  instanceId: string
   customerId: string
   lastMessage: string
   unreadCount: number
@@ -56,10 +55,10 @@ export interface Conversation {
 export interface Message {
   id: string
   organizationId: string
-  instanceId: string
   conversationId: string
   sender: 'customer' | 'agent'
-  type: 'text' | 'image' | 'audio' | 'video' | 'document'
+  senderName?: string | null
+  type: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker'
   text: string
   media?: string
   status: 'sent' | 'delivered' | 'read'
@@ -70,7 +69,6 @@ export interface Message {
 export interface Note {
   id: string
   organizationId: string
-  instanceId: string
   enquiryId: string
   author: string
   content: string
@@ -80,7 +78,6 @@ export interface Note {
 export interface Activity {
   id: string
   organizationId: string
-  instanceId: string
   enquiryId: string
   type: string
   description: string
@@ -91,7 +88,6 @@ export interface Activity {
 export interface Followup {
   id: string
   organizationId: string
-  instanceId: string
   enquiryId: string
   dueDate: string
   completed: boolean

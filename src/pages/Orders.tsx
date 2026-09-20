@@ -296,10 +296,9 @@ export default function Orders() {
 
   /** Only list orders that exist in Shopify (synced mirror). */
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
 
   const loadRecent = useCallback(async () => {
-    if (!organizationId || !instanceId) {
+    if (!organizationId) {
       setRecent([])
       return
     }
@@ -307,13 +306,12 @@ export default function Orders() {
       .from('shopify_orders')
       .select('id, shopify_order_id, shopify_order_name, customer_name, phone, email, amount, tags, status, error, created_at')
       .eq('organization_id', organizationId)
-      .eq('instance_id', instanceId)
       .not('shopify_order_id', 'is', null)
       .eq('status', 'created')
       .order('created_at', { ascending: false })
       .limit(100)
     setRecent((data as ShopifyOrderRow[]) ?? [])
-  }, [organizationId, instanceId])
+  }, [organizationId])
 
   const resyncOrders = useCallback(async () => {
     const res = await invokeFunction<{ synced: number; removed?: number }>('sync-shopify-orders', {})

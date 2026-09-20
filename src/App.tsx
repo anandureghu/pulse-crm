@@ -5,7 +5,7 @@ import { useAuthStore } from './store/authStore'
 import { useTenantStore } from './store/tenantStore'
 import { queryClient } from './lib/queryClient'
 import { tenantKeys } from './lib/queryKeys'
-import { requestNotificationPermission, showLocalNotification } from './lib/notifications'
+import { showLocalNotification } from './lib/notifications'
 import ErrorBoundary from './components/ErrorBoundary'
 import InstallPWA from './components/InstallPWA'
 import SplashScreen from './components/SplashScreen'
@@ -165,7 +165,6 @@ export default function App() {
       if (keepMounted) {
         setLoading(false)
       } else {
-        requestNotificationPermission().catch(() => {})
       }
     }
 

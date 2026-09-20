@@ -63,7 +63,6 @@ export function FollowupFormModal({
 }: FollowupFormModalProps) {
   const user = useAuthStore((s) => s.user)
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const users = useUsers()
   const { customers } = useCustomers()
   const { create } = useCreateFollowup()
@@ -150,12 +149,12 @@ export function FollowupFormModal({
 
       let enquiryId = latestEnquiry?.id
       if (!enquiryId) {
-        if (!organizationId || !instanceId) {
-          toast('Select an organization and instance first', 'error')
+        if (!organizationId) {
+          toast('Select an organization first', 'error')
           return
         }
         const { data: ensured, error: ensureError } = await ensureEnquiryForCustomer(
-          { organizationId, instanceId },
+          { organizationId },
           customerId,
           assignedTo || user?.email || null
         )

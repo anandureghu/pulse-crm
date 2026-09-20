@@ -5,12 +5,11 @@ import type { PaymentRow, ActivityRow } from '../lib/analytics'
 
 export function usePayments() {
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [payments, setPayments] = useState<PaymentRow[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!organizationId || !instanceId) {
+    if (!organizationId) {
       setPayments([])
       setLoading(false)
       return
@@ -21,7 +20,6 @@ export function usePayments() {
         .from('payments')
         .select('*')
         .eq('organization_id', organizationId)
-        .eq('instance_id', instanceId)
         .order('created_at', { ascending: false })
         .then(({ data }) => {
           setPayments(
@@ -41,23 +39,22 @@ export function usePayments() {
 
     fetch()
     const channel = supabase
-      .channel(`analytics-payments:${instanceId}:${crypto.randomUUID()}`)
+      .channel(`analytics-payments:${organizationId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, fetch)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [organizationId, instanceId])
+  }, [organizationId])
 
   return { payments, loading }
 }
 
 export function useRecentActivities(limit = 1500) {
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
   const [activities, setActivities] = useState<ActivityRow[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!organizationId || !instanceId) {
+    if (!organizationId) {
       setActivities([])
       setLoading(false)
       return
@@ -66,7 +63,6 @@ export function useRecentActivities(limit = 1500) {
       .from('activities')
       .select('id, enquiry_id, type, description, created_at')
       .eq('organization_id', organizationId)
-      .eq('instance_id', instanceId)
       .eq('type', 'status_changed')
       .order('created_at', { ascending: false })
       .limit(limit)
@@ -82,7 +78,7 @@ export function useRecentActivities(limit = 1500) {
         )
         setLoading(false)
       })
-  }, [limit, organizationId, instanceId])
+  }, [limit, organizationId])
 
   return { activities, loading }
 }

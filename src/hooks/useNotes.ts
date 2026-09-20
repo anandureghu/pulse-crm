@@ -8,7 +8,6 @@ export function useNotes(enquiryId: string | null) {
   const [notes, setNotes] = useState<Note[]>([])
   const user = useAuthStore((s) => s.user)
   const organizationId = useTenantStore((s) => s.activeOrganizationId)
-  const instanceId = useTenantStore((s) => s.activeInstanceId)
 
   useEffect(() => {
     if (!enquiryId) return
@@ -16,9 +15,9 @@ export function useNotes(enquiryId: string | null) {
   }, [enquiryId])
 
   const add = (content: string) => {
-    if (!enquiryId || !user || !organizationId || !instanceId) return
+    if (!enquiryId || !user || !organizationId) return
     return addNote(
-      { organizationId, instanceId },
+      { organizationId },
       { enquiryId, author: user.email ?? user.id, content },
     )
   }
