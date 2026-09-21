@@ -6,10 +6,12 @@ export interface EvolutionWebhookMessage {
     pushName?: string
     message?: {
       conversation?: string
+      extendedTextMessage?: { text?: string }
       imageMessage?: { url: string; caption?: string }
+      stickerMessage?: { url: string }
       audioMessage?: { url: string }
       videoMessage?: { url: string; caption?: string }
-      documentMessage?: { url: string; title?: string }
+      documentMessage?: { url: string; title?: string; fileName?: string; mimetype?: string }
     }
     messageType: string
     messageTimestamp?: number | string | { low: number; high?: number }

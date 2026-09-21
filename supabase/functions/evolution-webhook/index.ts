@@ -91,9 +91,11 @@ function extractText(data: EvolutionWebhookMessage['data']): string {
   const msg = data.message
   if (!msg) return ''
   if (msg.conversation) return msg.conversation
+  if (msg.extendedTextMessage?.text) return msg.extendedTextMessage.text
   if (msg.imageMessage?.caption) return msg.imageMessage.caption
   if (msg.videoMessage?.caption) return msg.videoMessage.caption
   if (msg.documentMessage?.title) return msg.documentMessage.title
+  if (msg.documentMessage?.fileName) return msg.documentMessage.fileName
   return ''
 }
 
@@ -172,7 +174,8 @@ async function storeMedia(
     const b64: string | undefined = data.base64
     if (!b64) return null
 
-    let mimeType = 'application/octet-stream'
+    // Prefer mimetype from the response body; fall back to parsing a data URI prefix.
+    let mimeType = (data.mimetype as string | undefined) ?? 'application/octet-stream'
     let b64Data = b64
     const match = b64.match(/^data:([^;]+);base64,(.+)$/)
     if (match) {

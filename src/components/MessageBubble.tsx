@@ -104,20 +104,10 @@ function MediaContent({
   }
 
   if (msg.type === 'document' && msg.media) {
-    return (
-      <a
-        href={msg.media}
-        target="_blank"
-        rel="noreferrer"
-        className={`flex items-center gap-2 ${isAgent ? 'text-green-100 hover:text-white' : 'text-blue-600 hover:text-blue-800'}`}
-      >
-        <span className="text-xl flex-shrink-0">📄</span>
-        <span className="text-sm underline truncate max-w-[180px]">{caption || 'Document'}</span>
-      </a>
-    )
+    return <DocumentMessage msg={msg} isAgent={isAgent} caption={caption} customerPhone={customerPhone} />
   }
 
-  return <span>{caption || (msg.media ? '📎 Attachment' : `[${msg.type}]`)}</span>
+  return <span>{caption || (msg.media ? '📎 Attachment' : null)}</span>
 }
 
 // ── Shared hook for fetching media via Evolution API on CDN failure ────────────
@@ -235,7 +225,7 @@ function MediaFallbackLink({
   msgType: string
   isAgent: boolean
 }) {
-  const icon = msgType === 'image' ? '🖼️' : msgType === 'audio' ? '🎵' : msgType === 'video' ? '🎬' : '📎'
+  const icon = msgType === 'image' ? '🖼️' : msgType === 'audio' ? '🎵' : msgType === 'video' ? '🎬' : msgType === 'document' ? '📄' : '📎'
   return (
     <a
       href={href}
@@ -369,6 +359,56 @@ function AudioMessage({
       className="max-w-[220px] h-8 rounded"
       style={{ filter: isAgent ? 'invert(1)' : 'none' }}
     />
+  )
+}
+
+// ── Document ──────────────────────────────────────────────────────────────────
+
+function DocumentMessage({
+  msg,
+  isAgent,
+  caption,
+  customerPhone,
+}: {
+  msg: Message
+  isAgent: boolean
+  caption: string | null
+  customerPhone?: string
+}) {
+  const { src, fetching, failed, onError: _onError } = useEvoSrc(msg, 'document', customerPhone)
+  const displayName = caption || 'Document'
+  const linkCls = isAgent ? 'text-green-200 hover:text-white' : 'text-blue-600 hover:text-blue-800'
+
+  if (failed) return <MediaFallbackLink href={msg.media!} msgType="document" isAgent={isAgent} />
+
+  if (fetching) {
+    return (
+      <div className="w-48 h-10 rounded bg-black/10 flex items-center justify-center text-xs opacity-60">
+        Loading…
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-start gap-2 max-w-[220px]">
+      <span className="text-2xl flex-shrink-0 mt-0.5">📄</span>
+      <div className="flex flex-col min-w-0">
+        <span className={`text-sm font-medium truncate ${isAgent ? 'text-green-100' : 'text-gray-800'}`}>
+          {displayName}
+        </span>
+        <div className="flex gap-3 mt-1">
+          <a href={src} target="_blank" rel="noreferrer" className={`text-xs underline ${linkCls}`}>
+            Open
+          </a>
+          <button
+            onClick={() => downloadSrc(src, displayName)}
+            className={`text-xs underline ${linkCls}`}
+          >
+            Download
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
