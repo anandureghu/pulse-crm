@@ -606,7 +606,7 @@ export default function Inbox() {
             </div>
           )}
         </div>
-        <div ref={listRef} className="flex-1 overflow-auto">
+        <div ref={listRef} className="flex-1 overflow-y-scroll overscroll-contain">
           {loading && <p className="text-sm text-gray-400 p-4">Loading…</p>}
           {!loading && filtered.length === 0 && (
             <p className="text-sm text-gray-400 p-4">
