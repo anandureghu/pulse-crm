@@ -57,6 +57,11 @@ export default function Layout() {
 
   const isAdminRoute = location.pathname.startsWith('/admin')
   const tenantReady = Boolean(activeOrganizationId && activeInstanceId) || isAdminRoute
+  // Full-bleed panels (Inbox virtual list, Pipeline board) need a bounded
+  // height so their inner overflow containers scroll — not <main>.
+  const isFixedHeightRoute =
+    location.pathname.startsWith('/inbox') ||
+    location.pathname.startsWith('/pipeline')
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -146,7 +151,11 @@ export default function Layout() {
           <TenantSwitcher />
         </header>
 
-        <main className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden pb-16 md:pb-0">
+        <main
+          className={`flex-1 min-h-0 min-w-0 overflow-x-hidden pb-16 md:pb-0 ${
+            isFixedHeightRoute ? 'overflow-hidden' : 'overflow-y-auto'
+          }`}
+        >
           {!tenantReady ? (
             <div className="p-8 max-w-md mx-auto text-center">
               <h1 className="text-lg font-semibold text-gray-800 mb-2">Select organization & instance</h1>

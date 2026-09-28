@@ -147,22 +147,6 @@ export default function Inbox() {
     }
   }, [selected, conversations])
 
-  // Infinite scroll sentinel
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) {
-          fetchNextPage()
-        }
-      },
-      { threshold: 0.1 }
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
-
   useEffect(() => {
     if (!actionsOpen) return
     const onDoc = (e: MouseEvent) => {
@@ -241,11 +225,29 @@ export default function Inbox() {
 
   // Virtual list — only renders ~15 visible rows regardless of total loaded
   const virtualizer = useVirtualizer({
-    count: filtered.length + (hasNextPage || isFetchingNextPage ? 1 : 0),
+    count: filtered.length,
     getScrollElement: () => listRef.current,
-    estimateSize: () => 72,
-    overscan: 5,
+    estimateSize: () => 88,
+    overscan: 8,
   })
+
+  // Infinite scroll sentinel — observe against the list scrollport, not the viewport.
+  // On mobile the list is nested under Layout chrome; a viewport root misses the sentinel.
+  useEffect(() => {
+    const root = listRef.current
+    const el = sentinelRef.current
+    if (!root || !el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage()
+        }
+      },
+      { root, threshold: 0.1, rootMargin: '120px 0px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, filtered.length, loading])
 
   const clearFilterKey = (key: keyof InboxFilters) => {
     setFilters((prev) => ({ ...prev, [key]: DEFAULT_INBOX_FILTERS[key] }))
@@ -547,9 +549,9 @@ export default function Inbox() {
     : null
 
   return (
-    <div className="flex h-full min-h-0 min-w-0">
-      <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0 min-h-0`}>
-        <div className="p-4 border-b border-gray-200 space-y-2">
+    <div className="flex h-full min-h-0 min-w-0 overflow-hidden">
+      <div className={`${selected ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-72 border-r border-gray-200 bg-white flex-shrink-0 h-full min-h-0`}>
+        <div className="p-4 border-b border-gray-200 space-y-2 flex-shrink-0">
           <div className="flex items-center justify-between gap-2">
             <h2 className="font-semibold text-gray-800">Inbox</h2>
             <button
@@ -606,7 +608,11 @@ export default function Inbox() {
             </div>
           )}
         </div>
-        <div ref={listRef} className="flex-1 overflow-y-scroll overscroll-contain">
+        <div
+          ref={listRef}
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y"
+          data-testid="inbox-conversation-list"
+        >
           {loading && <p className="text-sm text-gray-400 p-4">Loading…</p>}
           {!loading && filtered.length === 0 && (
             <p className="text-sm text-gray-400 p-4">
@@ -614,110 +620,101 @@ export default function Inbox() {
             </p>
           )}
           {!loading && filtered.length > 0 && (
-            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
-              {virtualizer.getVirtualItems().map((virtualItem) => {
-                // Last slot = sentinel / loading spinner
-                if (virtualItem.index === filtered.length) {
+            <>
+              <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+                {virtualizer.getVirtualItems().map((virtualItem) => {
+                  const c = filtered[virtualItem.index]
+                  const assignee = customerAssignee(c)
+                  const status = customerStatus(c)
+                  const cust = customerById.get(c.customerId)
+
                   return (
                     <div
-                      key="sentinel"
-                      ref={sentinelRef}
+                      key={c.id}
+                      data-index={virtualItem.index}
+                      ref={virtualizer.measureElement}
                       style={{
                         position: 'absolute',
                         top: 0,
                         left: 0,
                         width: '100%',
                         transform: `translateY(${virtualItem.start}px)`,
-                        height: `${virtualItem.size}px`,
                       }}
-                      className="flex items-center justify-center py-3"
                     >
-                      {isFetchingNextPage && (
-                        <span className="text-xs text-gray-400">Loading more…</span>
-                      )}
-                    </div>
-                  )
-                }
-
-                const c = filtered[virtualItem.index]
-                const assignee = customerAssignee(c)
-                const status = customerStatus(c)
-                const cust = customerById.get(c.customerId)
-
-                return (
-                  <div
-                    key={c.id}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${virtualItem.start}px)`,
-                    }}
-                  >
-                    <button
-                      onClick={() => setSelected(c.id)}
-                      className={`w-full text-left px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
-                        selected === c.id ? 'bg-green-50' : ''
-                      }`}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <div className="w-10 h-10 rounded-full flex-shrink-0 overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm">
-                          {cust?.profilePicUrl ? (
-                            <img src={cust.profilePicUrl} alt="" className="w-full h-full object-cover" />
-                          ) : cust?.isGroup ? (
-                            <span className="text-base">👥</span>
-                          ) : (
-                            customerName(c)[0]?.toUpperCase()
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-medium text-sm text-gray-800 truncate">{customerName(c)}</span>
-                            <span className="text-xs text-gray-400 flex-shrink-0">
-                              {formatConversationTime(c.updatedAt)}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between mt-0.5 gap-2">
-                            <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
-                            {c.unreadCount > 0 && (
-                              <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
-                                {c.unreadCount}
-                              </span>
+                      <button
+                        onClick={() => setSelected(c.id)}
+                        className={`w-full text-left px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                          selected === c.id ? 'bg-green-50' : ''
+                        }`}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div className="w-10 h-10 rounded-full flex-shrink-0 overflow-hidden bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm">
+                            {cust?.profilePicUrl ? (
+                              <img src={cust.profilePicUrl} alt="" className="w-full h-full object-cover" />
+                            ) : cust?.isGroup ? (
+                              <span className="text-base">👥</span>
+                            ) : (
+                              customerName(c)[0]?.toUpperCase()
                             )}
                           </div>
-                          {(assignee || status) && (
-                            <div className="mt-1.5 flex flex-wrap gap-1">
-                              {status && (
-                                <span
-                                  className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
-                                  title={`Status: ${statusLabel(status)}`}
-                                >
-                                  {statusLabel(status)}
-                                </span>
-                              )}
-                              {assignee && (
-                                <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
-                                  {assignee}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-sm text-gray-800 truncate">{customerName(c)}</span>
+                              <span className="text-xs text-gray-400 flex-shrink-0">
+                                {formatConversationTime(c.updatedAt)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between mt-0.5 gap-2">
+                              <span className="text-xs text-gray-500 truncate">{c.lastMessage}</span>
+                              {c.unreadCount > 0 && (
+                                <span className="bg-green-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 flex-shrink-0">
+                                  {c.unreadCount}
                                 </span>
                               )}
                             </div>
-                          )}
+                            {(assignee || status) && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {status && (
+                                  <span
+                                    className={`inline-flex max-w-full text-[11px] px-2 py-0.5 rounded-full truncate capitalize ${statusColor(status)}`}
+                                    title={`Status: ${statusLabel(status)}`}
+                                  >
+                                    {statusLabel(status)}
+                                  </span>
+                                )}
+                                {assignee && (
+                                  <span className="inline-flex max-w-full bg-blue-100 text-blue-700 text-[11px] px-2 py-0.5 rounded-full truncate">
+                                    {assignee}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              {/* Always mounted below the virtual window so IntersectionObserver can attach. */}
+              <div
+                ref={sentinelRef}
+                className="flex items-center justify-center py-3 min-h-10"
+                aria-hidden={!hasNextPage && !isFetchingNextPage}
+              >
+                {isFetchingNextPage && (
+                  <span className="text-xs text-gray-400">Loading more…</span>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
 
-      <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-gray-50 min-w-0 min-h-0`}>
+      <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-1 flex-col bg-gray-50 min-w-0 min-h-0 h-full overflow-hidden`}>
         {conv ? (
           <>
-            <div className="bg-white border-b border-gray-200 px-3 py-3 flex items-center gap-2">
+            <div className="bg-white border-b border-gray-200 px-3 py-3 flex items-center gap-2 flex-shrink-0">
               <button
                 onClick={() => setSelected(null)}
                 className="md:hidden text-gray-400 hover:text-gray-600 p-1 -ml-1 flex-shrink-0"
@@ -863,7 +860,7 @@ export default function Inbox() {
               </div>
             )}
 
-            <div className="flex-1 overflow-auto p-4 space-y-2">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y p-4 space-y-2">
               {allMessages.map((msg) => (
                 <MessageBubble
                   key={msg.id}
@@ -911,7 +908,7 @@ export default function Inbox() {
               </div>
             )}
 
-            <div className="relative bg-white border-t border-gray-200 p-3">
+            <div className="relative bg-white border-t border-gray-200 p-3 flex-shrink-0">
               <SlashCommandPicker
                 text={text}
                 onChange={setText}
